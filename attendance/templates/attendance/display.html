@@ -1,0 +1,78 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Clinic QR</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 24px;
+        }
+
+        .wrap {
+            display: grid;
+            place-items: center;
+            height: 100vh;
+        }
+
+        #qrcode {
+            margin: 16px auto;
+        }
+
+        .hint {
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div>
+        <h1>SCAN THIS QR</h1>
+        <div id="qrcode"></div>
+        <div class="hint">Updates every 60 seconds</div>
+        <div id="ts" class="hint"></div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+    const qrDiv = document.getElementById("qrcode");
+    const tsDiv = document.getElementById("ts");
+
+    let countdownTimer = null;
+    let refreshTimer = null;
+
+    function startCountdown(expiresAtEpoch) {
+        if (countdownTimer) clearInterval(countdownTimer);
+
+        countdownTimer = setInterval(() => {
+            const now = Math.floor(Date.now() / 1000);
+            const left = Math.max(0, expiresAtEpoch - now);
+            tsDiv.textContent = `Server-synced: expires in ${left}s`;
+        }, 250);
+    }
+
+    async function refreshQR() {
+        const res = await fetch("/api/qr/");
+        const data = await res.json();
+
+        qrDiv.innerHTML = "";
+        new QRCode(qrDiv, {text: data.token, width: 320, height: 320});
+
+        // sync countdown
+        startCountdown(data.expires_at);
+
+        // schedule next refresh precisely when server says it expires (+ 200ms buffer)
+        if (refreshTimer) clearTimeout(refreshTimer);
+        const ms = Math.max(200, (data.expires_in * 1000) + 200);
+        refreshTimer = setTimeout(refreshQR, ms);
+    }
+
+    refreshQR();
+</script>
+
+</body>
+</html>

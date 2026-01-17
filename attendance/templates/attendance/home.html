@@ -1,0 +1,338 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Absensi Klinik</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 16px;
+            max-width: 540px;
+            margin: auto;
+        }
+
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
+        input, select, button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 6px;
+        }
+
+        #reader {
+            width: 100%;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .small {
+            opacity: 0.7;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+<h2>Absensi Klinik</h2>
+
+<div class="card">
+    <div class="row">
+        <button onclick="setAction('IN')">Clock In</button>
+        <button onclick="setAction('OUT')">Clock Out</button>
+    </div>
+    <div class="small" id="actionLabel">Action: IN</div>
+</div>
+
+<div class="card">
+    <h3>1) Scan QR (wajib)</h3>
+    <div id="reader"></div>
+    <div class="small">QR token: <span id="qrToken">-</span></div>
+    <div class="small">QR status: <span id="qrStatus">Not scanned</span></div>
+    <div class="small">Expires in: <span id="qrCountdown">-</span></div>
+    <button type="button" onclick="forceRescan()">Rescan QR</button>
+
+</div>
+
+<div class="card">
+    <h3>2) Isi data</h3>
+
+    <label>Mode</label>
+    <select id="mode" onchange="toggleProxy()">
+        <option value="normal">Normal</option>
+        <option value="proxy">Clock untuk orang lain (Proxy)</option>
+    </select>
+
+    <label>Nama Staff (Subject)</label>
+    <select id="subject_employee_id">
+        {% for e in employees %}
+            <option value="{{ e.id }}">{{ e.name }}</option>
+        {% endfor %}
+    </select>
+
+    <label>PIN Staff (Subject)</label>
+    <input id="subject_pin" type="password" inputmode="numeric" placeholder="PIN"/>
+
+    <div id="proxyBox" style="display:none;">
+        <label>Saksi (Witness)</label>
+        <select id="witness_employee_id">
+            {% for e in employees %}
+                <option value="{{ e.id }}">{{ e.name }}</option>
+            {% endfor %}
+        </select>
+
+        <label>PIN Saksi (Witness)</label>
+        <input id="witness_pin" type="password" inputmode="numeric" placeholder="PIN saksi"/>
+    </div>
+
+    <label>Selfie (wajib)</label>
+    <input id="photo" type="file" accept="image/*" capture="user"/>
+
+    <button onclick="submitClock()">Submit</button>
+
+    <div class="small" id="result"></div>
+</div>
+
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<script>
+    // ======= State =======
+    let currentAction = "IN";
+    let scannedToken = "";
+    let countdownTimer = null;
+    let expiresIn = 0;
+
+    const html5QrCode = new Html5Qrcode("reader");
+    let scanning = false;
+
+    // ======= UI helpers =======
+    function setAction(a) {
+        currentAction = a;
+        document.getElementById("actionLabel").textContent = "Action: " + a;
+    }
+
+    function toggleProxy() {
+        const isProxy = document.getElementById("mode").value === "proxy";
+        document.getElementById("proxyBox").style.display = isProxy ? "block" : "none";
+    }
+
+    function setQRUI(status, secondsLeft) {
+        document.getElementById("qrStatus").textContent = status;
+        document.getElementById("qrCountdown").textContent =
+            (secondsLeft != null) ? (secondsLeft + "s") : "-";
+    }
+
+    function setResult(msg) {
+        document.getElementById("result").textContent = msg || "";
+    }
+
+    // ======= Countdown (server-synced seconds) =======
+    function stopCountdown() {
+        if (countdownTimer) clearInterval(countdownTimer);
+        countdownTimer = null;
+    }
+
+    function startCountdown(secondsLeft) {
+        stopCountdown();
+        expiresIn = Number(secondsLeft || 0);
+
+        setQRUI("Valid (server)", expiresIn);
+
+        countdownTimer = setInterval(() => {
+            expiresIn = Math.max(0, expiresIn - 1);
+            setQRUI(expiresIn > 0 ? "Valid (server)" : "Expired — rescan", expiresIn);
+
+            if (expiresIn <= 0) {
+                scannedToken = "";
+                stopCountdown();
+                // resume scanning automatically when expired
+                startScanning();
+            }
+        }, 1000);
+    }
+
+    // ======= QR validation (asks server) =======
+    async function validateScannedToken(token) {
+        const res = await fetch(`/api/qr/check/?token=${encodeURIComponent(token)}`);
+        return await res.json(); // { valid, expires_in, ... }
+    }
+
+    // ======= Scanner control =======
+    async function startScanning() {
+        if (scanning) return;
+
+        // If we already have a valid token, don't scan again
+        if (scannedToken) return;
+
+        scanning = true;
+        try {
+            const config = {fps: 10, qrbox: 250};
+            await html5QrCode.start(
+                {facingMode: "environment"},
+                config,
+                async (decodedText) => {
+                    // Pause scanning immediately to prevent repeated rescans
+                    await stopScanning();
+                    await handleScan(decodedText);
+                }
+            );
+        } catch (e) {
+            scanning = false;
+            setQRUI("Camera error — allow permission & reload", null);
+        }
+    }
+
+    async function stopScanning() {
+        if (!scanning) return;
+        scanning = false;
+        try {
+            await html5QrCode.stop();
+            await html5QrCode.clear();
+        } catch (e) {
+            // ignore stop/clear errors
+        }
+    }
+
+    // ======= Scan handler (single-shot) =======
+    async function handleScan(decodedText) {
+        const token = (decodedText || "").trim();
+        if (!token) {
+            setQRUI("Scan failed — try again", null);
+            startScanning();
+            return;
+        }
+
+        // Show token + checking
+        scannedToken = token;
+        document.getElementById("qrToken").textContent = token.slice(0, 20) + "...";
+        setQRUI("Checking…", null);
+
+        try {
+            const check = await validateScannedToken(token);
+
+            if (!check.valid) {
+                scannedToken = "";
+                stopCountdown();
+                setQRUI("Expired/invalid — scan again", 0);
+                startScanning();
+                return;
+            }
+
+            // Valid token — start synchronized countdown
+            startCountdown(check.expires_in);
+
+            // Do NOT resume scanning while token is valid.
+            // Rescan happens via button or when token expires.
+        } catch (e) {
+            scannedToken = "";
+            stopCountdown();
+            setQRUI("Network error — try scan again", null);
+            startScanning();
+        }
+    }
+
+    // ======= Rescan button =======
+    async function forceRescan() {
+        scannedToken = "";
+        stopCountdown();
+        document.getElementById("qrToken").textContent = "-";
+        setQRUI("Not scanned", null);
+        setResult("");
+        await startScanning();
+    }
+
+    // ======= Submit =======
+    async function submitClock() {
+        const mode = document.getElementById("mode").value;
+        const isProxy = mode === "proxy";
+
+        const subjectId = document.getElementById("subject_employee_id").value;
+        const subjectPin = document.getElementById("subject_pin").value;
+
+        const witnessId = document.getElementById("witness_employee_id").value;
+        const witnessPin = document.getElementById("witness_pin").value;
+
+        const photoFile = document.getElementById("photo").files[0];
+
+        if (!scannedToken) {
+            setResult("❌ Scan QR dulu.");
+            return;
+        }
+        if (!subjectPin) {
+            setResult("❌ PIN staff wajib.");
+            return;
+        }
+        if (!photoFile) {
+            setResult("❌ Selfie wajib.");
+            return;
+        }
+        if (isProxy && !witnessPin) {
+            setResult("❌ PIN saksi wajib (proxy).");
+            return;
+        }
+
+        const form = new FormData();
+        form.append("action", currentAction);
+        form.append("qr_token", scannedToken);
+        form.append("subject_employee_id", subjectId);
+        form.append("subject_pin", subjectPin);
+        form.append("photo", photoFile);
+        form.append("is_proxy", isProxy ? "1" : "0");
+
+        if (isProxy) {
+            form.append("witness_employee_id", witnessId);
+            form.append("witness_pin", witnessPin);
+        }
+
+        try {
+            const resp = await fetch("/api/clock/", {method: "POST", body: form});
+            const data = await resp.json();
+
+            if (data.ok) {
+                setResult("✅ " + data.message + " @ " + data.time);
+                // Reset for next user
+                scannedToken = "";
+                stopCountdown();
+                document.getElementById("qrToken").textContent = "-";
+                setQRUI("Not scanned", null);
+                document.getElementById("photo").value = "";
+                startScanning();
+            } else {
+                setResult("❌ " + (data.error || "Error"));
+                // If QR expired at submit time, force rescan
+                if ((data.error || "").toLowerCase().includes("qr")) {
+                    scannedToken = "";
+                    stopCountdown();
+                    setQRUI("Expired/invalid — scan again", 0);
+                    startScanning();
+                }
+            }
+        } catch (e) {
+            setResult("❌ Network error");
+        }
+    }
+
+    // ======= Start scanning on load =======
+    // Note: some browsers require user gesture; if so, press Rescan.
+    window.addEventListener("load", () => {
+        startScanning();
+    });
+</script>
+
+
+</body>
+</html>
