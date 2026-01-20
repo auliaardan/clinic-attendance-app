@@ -128,4 +128,5 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+CSRF_TRUSTED_ORIGINS = [ h.strip() for h in env("CSRF_TRUSTED_ORIGINS").split(",") if h.strip() ]
 
