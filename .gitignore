@@ -5,7 +5,10 @@
 __pycache__
 db.sqlite3
 media
+clinic-rootCA.pem
 malino.key
+malino.crt
+malino+*.pem
 
 # Backup files #
 *.bak

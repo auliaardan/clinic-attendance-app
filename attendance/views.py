@@ -1,4 +1,8 @@
 from datetime import timedelta
+import os
+from io import BytesIO
+from django.core.files.base import ContentFile
+from PIL import Image, ImageOps
 
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import JsonResponse
@@ -10,6 +14,33 @@ from django.views.decorators.http import require_http_methods, require_GET
 from .models import Employee, AttendanceSession, AttendanceEvent
 from .qr import make_qr_token, window_meta, validate_qr_token, token_expires_in
 
+def recompress_image(uploaded_file, *, max_side=1024, quality=75) -> ContentFile:
+    """
+    Convert uploaded image to JPEG, auto-rotate by EXIF, and resize so longest edge <= max_side.
+    Returns a Django ContentFile ready to assign to ImageField.
+    """
+    img = Image.open(uploaded_file)
+    img = ImageOps.exif_transpose(img)  # fix iPhone/Android rotation
+
+    # Convert to RGB for JPEG (handles PNG with alpha, etc.)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    elif img.mode == "L":
+        img = img.convert("RGB")
+
+    # Resize (preserve aspect ratio)
+    w, h = img.size
+    longest = max(w, h)
+    if longest > max_side:
+        scale = max_side / float(longest)
+        new_size = (int(w * scale), int(h * scale))
+        img = img.resize(new_size, Image.LANCZOS)
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    buf.seek(0)
+
+    return ContentFile(buf.read())
 
 def get_client_ip(request):
     return request.META.get("REMOTE_ADDR")
@@ -52,16 +83,20 @@ def api_clock(request):
     witness_id = request.POST.get("witness_employee_id", "")
     witness_pin = request.POST.get("witness_pin", "")
 
-    photo = request.FILES.get("photo")
-
     if action not in ("IN", "OUT"):
         return JsonResponse({"ok": False, "error": "Invalid action"}, status=400)
 
     if token_expires_in(qr_token, window_seconds=60, max_age_seconds=70) <= 0:
         return JsonResponse({"ok": False, "error": "QR expired/invalid"}, status=403)
 
+    photo = request.FILES.get("photo")
     if not photo:
         return JsonResponse({"ok": False, "error": "Photo is required"}, status=400)
+
+    # Optional hard cap (good UX)
+    MAX_UPLOAD = 10 * 1024 * 1024
+    if getattr(photo, "size", 0) > MAX_UPLOAD:
+        return JsonResponse({"ok": False, "error": "Photo too large (max 10MB)"}, status=413)
 
     try:
         subject = Employee.objects.get(id=subject_id, is_active=True)
@@ -82,9 +117,13 @@ def api_clock(request):
         if not witness.check_pin(witness_pin):
             return JsonResponse({"ok": False, "error": "Wrong witness PIN"}, status=403)
 
-    # Prevent self-witness in proxy mode
-    if is_proxy and witness and witness.id == subject.id:
-        return JsonResponse({"ok": False, "error": "Witness cannot be the same person"}, status=400)
+        if witness.id == subject.id:
+            return JsonResponse({"ok": False, "error": "Witness cannot be the same person"}, status=400)
+
+    # Now do the CPU work (recompress)
+    compressed = recompress_image(photo, max_side=1024, quality=75)
+    filename = f"{subject.id}_{timezone.now().strftime('%Y%m%d_%H%M%S')}_{action}.jpg"
+    photo_file = ContentFile(compressed.read(), name=filename)
 
     now = timezone.now()
     open_session = AttendanceSession.objects.filter(employee=subject, is_open=True).order_by("-id").first()
@@ -104,7 +143,7 @@ def api_clock(request):
             session=session,
             subject_employee=subject,
             witness_employee=witness,
-            photo=photo,
+            photo=photo_file,
             client_ip=get_client_ip(request),
             user_agent=request.META.get("HTTP_USER_AGENT", ""),
             is_proxy=is_proxy,
@@ -113,28 +152,27 @@ def api_clock(request):
 
         return JsonResponse({"ok": True, "message": "Clock-in recorded", "time": now.isoformat()})
 
-    else:  # OUT
-        if not open_session or not open_session.clock_in_time or open_session.clock_out_time:
-            return JsonResponse({"ok": False, "error": "No open session to clock out"}, status=409)
+    # OUT
+    if not open_session or not open_session.clock_in_time or open_session.clock_out_time:
+        return JsonResponse({"ok": False, "error": "No open session to clock out"}, status=409)
 
-        open_session.clock_out_time = now
-        open_session.is_open = False
-        open_session.save()
+    open_session.clock_out_time = now
+    open_session.is_open = False
+    open_session.save(update_fields=["clock_out_time", "is_open"])
 
-        AttendanceEvent.objects.create(
-            event_type="OUT",
-            session=open_session,
-            subject_employee=subject,
-            witness_employee=witness,
-            photo=photo,
-            client_ip=get_client_ip(request),
-            user_agent=request.META.get("HTTP_USER_AGENT", ""),
-            is_proxy=is_proxy,
-            note="PROXY" if is_proxy else ""
-        )
+    AttendanceEvent.objects.create(
+        event_type="OUT",
+        session=open_session,
+        subject_employee=subject,
+        witness_employee=witness,
+        photo=photo_file,  # ✅ compressed here too
+        client_ip=get_client_ip(request),
+        user_agent=request.META.get("HTTP_USER_AGENT", ""),
+        is_proxy=is_proxy,
+        note="PROXY" if is_proxy else ""
+    )
 
-        return JsonResponse({"ok": True, "message": "Clock-out recorded", "time": now.isoformat()})
-
+    return JsonResponse({"ok": True, "message": "Clock-out recorded", "time": now.isoformat()})
 
 def is_manager(user):
     return user.is_authenticated and user.is_staff  # simple & best practice

@@ -255,6 +255,40 @@
         await startScanning();
     }
 
+    async function resizeImage(file, maxSide = 1024, quality = 0.75) {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+
+        try {
+            await new Promise((resolve, reject) => {
+                img.onload = resolve;
+                img.onerror = reject;
+                img.src = url;
+            });
+
+            let {width, height} = img;
+            const longest = Math.max(width, height);
+            if (longest > maxSide) {
+                const scale = maxSide / longest;
+                width = Math.round(width * scale);
+                height = Math.round(height * scale);
+            }
+
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, width, height);
+
+            const blob = await new Promise((resolve) =>
+                canvas.toBlob(resolve, "image/jpeg", quality)
+            );
+            return blob;
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+
     // ======= Submit =======
     async function submitClock() {
         const mode = document.getElementById("mode").value;
@@ -267,6 +301,8 @@
         const witnessPin = document.getElementById("witness_pin").value;
 
         const photoFile = document.getElementById("photo").files[0];
+        const resizedBlob = await resizeImage(photoFile, 1024, 0.75); // maxSide=1024, quality=0.75
+
 
         if (!scannedToken) {
             setResult("❌ Scan QR dulu.");
@@ -290,7 +326,7 @@
         form.append("qr_token", scannedToken);
         form.append("subject_employee_id", subjectId);
         form.append("subject_pin", subjectPin);
-        form.append("photo", photoFile);
+        form.append("photo", resizedBlob, "selfie.jpg");
         form.append("is_proxy", isProxy ? "1" : "0");
 
         if (isProxy) {
