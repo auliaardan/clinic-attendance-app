@@ -1,6 +1,6 @@
 from datetime import timedelta, datetime, date
 from io import BytesIO
-
+from django.db import models
 from PIL import Image, ImageOps
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.files.base import ContentFile
@@ -212,6 +212,32 @@ def manager_dashboard(request):
     month_start = today.replace(day=1)
     next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
     month_end = next_month  # exclusive bound
+
+    # week bounds (Monday-start)
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=7)
+
+    pending_qs = (
+        ShiftAssignment.objects.filter(
+            date__gte=week_start,
+            date__lt=week_end,
+            status="SUBMITTED",
+        )
+        .select_related("division")
+        .values("division_id", "division__name")
+        .annotate(count=models.Count("id"))
+        .order_by("division__name")
+    )
+
+    pending_rosters = []
+    for row in pending_qs:
+        pending_rosters.append({
+            "division_id": row["division_id"],
+            "division_name": row["division__name"],
+            "count": row["count"],
+            "week_start": week_start,
+        })
+
 
     # --- LEAVE (approved) ---
     approved_leave_today_emp_ids = set(
@@ -481,7 +507,8 @@ def manager_dashboard(request):
         "no_show_shifts": no_show,
         "on_time_rate": on_time_rate,
         "late_rate": late_rate,
-
+        "week_start": week_start,
+        "pending_rosters": pending_rosters,
         # exceptions
         "punctual_rows": punctual_rows,
         "open_sessions": open_sessions,

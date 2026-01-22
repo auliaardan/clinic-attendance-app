@@ -137,12 +137,19 @@
     </div>
 
     <div class="card">
+        {% if is_manager %}
+            <div class="muted">Manager view: read-only. To edit, ask division head to resubmit (or remove disabled).
+            </div>
+        {% endif %}
+
         <form method="post">
             {% csrf_token %}
             <div class="row" style="margin-bottom:10px;">
                 <div class="muted">Editing: <b>{{ division.name }}</b> · Week: <b>{{ week_start }}</b></div>
                 <div class="right">
-                    <button type="submit">Save roster</button>
+                    {% if not is_manager %}
+                        <button type="submit">Save roster</button>
+                    {% endif %}
                 </div>
             </div>
 
@@ -165,7 +172,9 @@
 
                                         {% with sel=selected_ids|get:key %}
                                             <select class="multi" multiple
-                                                    name="shifts_{{ emp.id }}_{{ d|date:'Y-m-d' }}">
+                                                    name="shifts_{{ emp.id }}_{{ d|date:'Y-m-d' }}"
+                                                    {% if is_manager %}disabled{% endif %}>
+
                                                 {% for t in templates %}
                                                     <option value="{{ t.id }}"
                                                             {% if sel and t.id in sel %}selected{% endif %}>

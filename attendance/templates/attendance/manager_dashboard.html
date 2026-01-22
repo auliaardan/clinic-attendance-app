@@ -139,6 +139,33 @@
 </div>
 
 <div class="card">
+  <div class="row">
+    <h3 style="margin:0;">Pending roster approvals (week of {{ week_start }})</h3>
+    <div class="right"><a href="/roster/">Open roster</a></div>
+  </div>
+
+  {% if pending_rosters %}
+    <table>
+      <tr><th>Division</th><th>Submitted items</th><th>Action</th></tr>
+      {% for p in pending_rosters %}
+        <tr>
+          <td><b>{{ p.division_name }}</b></td>
+          <td>{{ p.count }}</td>
+          <td>
+            <a href="/roster/?division={{ p.division_id }}&week_start={{ p.week_start|date:'Y-m-d' }}">
+              Review & approve
+            </a>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <div class="pill">No pending submissions this week</div>
+  {% endif %}
+</div>
+
+
+<div class="card">
     <h3 style="margin-top:0;">Exceptions (today by shift)</h3>
     {% if punctual_rows %}
         <table>
