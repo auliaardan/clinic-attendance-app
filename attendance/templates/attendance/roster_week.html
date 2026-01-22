@@ -164,7 +164,6 @@
                 {% for emp in employees %}
                     <tr>
                         <td><b>{{ emp.name }}</b></td>
-
                         {% for d in days %}
                             <td>
                                 <div class="cell">
@@ -190,8 +189,8 @@
                                                         Saved:
                                                         {% for a in ex %}
                                                             <span class="pill">
-              {{ a.template.name }} ({{ a.start_time }}-{{ a.end_time }}) · {{ a.status }}
-            </span>
+                  {{ a.template.name }} ({{ a.start_time }}-{{ a.end_time }}) · {{ a.status }}
+                </span>
                                                         {% endfor %}
                                                     </div>
                                                 {% endif %}
@@ -199,38 +198,9 @@
 
                                         {% endwith %}
                                     {% endwith %}
-                                    {% with key=emp.id|stringformat:"s"|add:":"|add:d|date:"Y-m-d" %}
-
-                                        {% with sel=selected_ids|get:key %}
-                                            <select class="multi" multiple
-                                                    name="shifts_{{ emp.id }}_{{ d|date:'Y-m-d' }}"
-                                                    {% if is_manager %}disabled{% endif %}>
-
-                                                {% for t in templates %}
-                                                    <option value="{{ t.id }}"
-                                                            {% if sel and t.id in sel %}selected{% endif %}>
-                                                        {{ t.name }} ({{ t.start_time }}–{{ t.end_time }})
-                                                    </option>
-                                                {% endfor %}
-                                            </select>
-                                        {% endwith %}
-
-                                        {% with ex=existing_map|get:key %}
-                                            {% if ex %}
-                                                <div class="muted">
-                                                    Saved:
-                                                    {% for a in ex %}
-                                                        <span class="pill">
-            {{ a.template.name }} ({{ a.start_time }}-{{ a.end_time }}) · {{ a.status }}
-          </span>
-                                                    {% endfor %}
-                                                </div>
-                                            {% endif %}
-                                        {% endwith %}
-
-                                    {% endwith %}
                                 </div>
                             </td>
+
                         {% endfor %}
                     </tr>
                 {% endfor %}
