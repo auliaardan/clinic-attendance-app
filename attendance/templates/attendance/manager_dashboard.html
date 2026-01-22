@@ -1,69 +1,308 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Manager Dashboard</title>
-  <style>
-    body { font-family: sans-serif; padding: 16px; max-width: 1100px; margin: auto; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 10px; border-bottom: 1px solid #eee; text-align: left; vertical-align: top; }
-    .pill { display:inline-block; padding:4px 10px; border-radius:999px; background:#f3f3f3; }
-    img { max-height: 90px; border-radius: 8px; }
-  </style>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Manager Dashboard</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 16px;
+            max-width: 1200px;
+            margin: auto;
+        }
+
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 10px;
+        }
+
+        .kpi {
+            border: 1px solid #eee;
+            border-radius: 12px;
+            padding: 12px;
+        }
+
+        .kpi .num {
+            font-size: 22px;
+            font-weight: 800;
+        }
+
+        .muted {
+            color: #666;
+            font-size: 13px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .pill {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #f3f3f3;
+            font-size: 12px;
+        }
+
+        .pill.red {
+            background: #ffe5e5;
+        }
+
+        .pill.yellow {
+            background: #fff4d6;
+        }
+
+        .pill.green {
+            background: #e9ffe9;
+        }
+
+        img {
+            max-height: 90px;
+            border-radius: 8px;
+        }
+
+        .row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .right {
+            margin-left: auto;
+        }
+    </style>
 </head>
 <body>
-  <h2>Manager Dashboard</h2>
-  <div class="card">
-    <div><b>Date:</b> {{ today }}</div>
-    <div><b>Events today:</b> {{ today_count }}</div>
-    <div><b>Proxy events today:</b> {{ proxy_events_count }}</div>
-    <div style="margin-top:8px;">
-      <a href="/admin/">Open Admin</a>
+<div class="row">
+    <h2 style="margin:0;">Manager Dashboard</h2>
+    <div class="right muted">Date: <b>{{ today }}</b></div>
+</div>
+
+<div class="card">
+    <div class="row">
+        <div class="muted">
+            Grace: <b>15 min</b> · No-show: <b>120 min</b> · Early window: <b>60 min</b>
+        </div>
+        <div class="right">
+            <a href="/admin/">Open Admin</a>
+        </div>
     </div>
-  </div>
 
-  <div class="card">
-    <h3>Who is IN right now</h3>
-    {% if open_sessions %}
-      <table>
-        <tr><th>Staff</th><th>Clock In</th></tr>
-        {% for s in open_sessions %}
-          <tr>
-            <td>{{ s.employee.name }}</td>
-            <td>{{ s.clock_in_time }}</td>
-          </tr>
-        {% endfor %}
-      </table>
+    <div class="grid" style="margin-top:10px;">
+        <div class="kpi">
+            <div class="muted">Scheduled shifts (today)</div>
+            <div class="num">{{ scheduled_shifts }}</div>
+        </div>
+        <div class="kpi">
+            <div class="muted">Attended shifts</div>
+            <div class="num">{{ attended_shifts }}</div>
+            <div class="muted">Rate: <b>{{ attendance_rate }}%</b></div>
+        </div>
+        <div class="kpi">
+            <div class="muted">On time</div>
+            <div class="num">{{ on_time_shifts }}</div>
+            <div class="muted">Rate: <b>{{ on_time_rate }}%</b></div>
+        </div>
+        <div class="kpi">
+            <div class="muted">Late</div>
+            <div class="num">{{ late_shifts }}</div>
+            <div class="muted">Rate: <b>{{ late_rate }}%</b></div>
+        </div>
+        <div class="kpi">
+            <div class="muted">No-show</div>
+            <div class="num">{{ no_show_shifts }}</div>
+        </div>
+        <div class="kpi">
+            <div class="muted">Proxy events (today)</div>
+            <div class="num">{{ proxy_events_count }}</div>
+            <div class="muted">Events: <b>{{ today_count }}</b></div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0;">Exceptions (today by shift)</h3>
+    {% if punctual_rows %}
+        <table>
+            <tr>
+                <th>Staff</th>
+                <th>Shift</th>
+                <th>Clock-in</th>
+                <th>Status</th>
+                <th>Late (min)</th>
+            </tr>
+            {% for r in punctual_rows %}
+                <tr>
+                    <td>{{ r.employee.name }}</td>
+                    <td>{{ r.shift_start }} – {{ r.shift_end }}</td>
+                    <td>{% if r.in_time %}{{ r.in_time }}{% else %}-{% endif %}</td>
+                    <td>
+                        {% if r.status == "ON_TIME" %}
+                            <span class="pill green">ON TIME</span>
+                        {% elif r.status == "COVERED" %}
+                            <span class="pill green">COVERED</span>
+                        {% elif r.status == "LATE" %}
+                            <span class="pill yellow">LATE</span>
+                        {% else %}
+                            <span class="pill red">NO SHOW</span>
+                        {% endif %}
+                    </td>
+                    <td>{% if r.minutes_late != None %}{{ r.minutes_late }}{% else %}-{% endif %}</td>
+                </tr>
+            {% endfor %}
+        </table>
     {% else %}
-      <div class="pill">Nobody currently IN</div>
+        <div class="pill">No approved roster for today (or everyone on leave)</div>
     {% endif %}
-  </div>
+</div>
 
-  <div class="card">
-    <h3>Latest events (today)</h3>
+<div class="card">
+    <h3 style="margin-top:0;">Who is IN right now</h3>
+    {% if open_sessions %}
+        <table>
+            <tr>
+                <th>Staff</th>
+                <th>Clock In</th>
+                <th>Flag</th>
+            </tr>
+            {% for s in open_sessions %}
+                <tr>
+                    <td>{{ s.employee.name }}</td>
+                    <td>{{ s.clock_in_time }}</td>
+                    <td>
+                        {% if s in open_too_long %}
+                            <span class="pill red">OPEN &gt; 10h</span>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <div class="pill">Nobody currently IN</div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3 style="margin-top:0;">Monthly insights ({{ month_start }} → now)</h3>
+    <div class="grid">
+        <div class="kpi">
+            <div class="muted">Scheduled shifts</div>
+            <div class="num">{{ monthly_scheduled }}</div>
+        </div>
+        <div class="kpi">
+            <div class="muted">Attendance rate</div>
+            <div class="num">{{ monthly_att_rate }}%</div>
+        </div>
+        <div class="kpi">
+            <div class="muted">On-time rate</div>
+            <div class="num">{{ monthly_ontime_rate }}%</div>
+        </div>
+        <div class="kpi">
+            <div class="muted">Late rate</div>
+            <div class="num">{{ monthly_late_rate }}%</div>
+        </div>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+        <div style="flex:1; min-width:320px;">
+            <h4>Top late offenders</h4>
+            <table>
+                <tr>
+                    <th>Staff</th>
+                    <th>Late</th>
+                    <th>No-show</th>
+                    <th>Attended</th>
+                    <th>Scheduled</th>
+                </tr>
+                {% for x in top_late %}
+                    <tr>
+                        <td>{{ x.emp.name }}</td>
+                        <td>{{ x.late }}</td>
+                        <td>{{ x.noshow }}</td>
+                        <td>{{ x.attended }}</td>
+                        <td>{{ x.scheduled }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+
+        <div style="flex:1; min-width:320px;">
+            <h4>Top no-show</h4>
+            <table>
+                <tr>
+                    <th>Staff</th>
+                    <th>No-show</th>
+                    <th>Late</th>
+                    <th>Attended</th>
+                    <th>Scheduled</th>
+                </tr>
+                {% for x in top_noshow %}
+                    <tr>
+                        <td>{{ x.emp.name }}</td>
+                        <td>{{ x.noshow }}</td>
+                        <td>{{ x.late }}</td>
+                        <td>{{ x.attended }}</td>
+                        <td>{{ x.scheduled }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+</div>
+<div class="kpi">
+    <div class="muted">Covered (long shift)</div>
+    <div class="num">{{ covered_shifts }}</div>
+</div>
+
+
+<div class="card">
+    <h3 style="margin-top:0;">Latest events (today)</h3>
     <table>
-      <tr>
-        <th>Time</th><th>Type</th><th>Subject</th><th>Witness</th><th>Proxy?</th><th>Photo</th>
-      </tr>
-      {% for e in today_events %}
         <tr>
-          <td>{{ e.created_at }}</td>
-          <td>{{ e.event_type }}</td>
-          <td>{{ e.subject_employee.name }}</td>
-          <td>{% if e.witness_employee %}{{ e.witness_employee.name }}{% else %}-{% endif %}</td>
-          <td>{% if e.is_proxy %}<span class="pill">PROXY</span>{% else %}-{% endif %}</td>
-          <td>
-            {% if e.photo %}
-              <a href="{{ e.photo.url }}" target="_blank"><img src="{{ e.photo.url }}" /></a>
-            {% else %}
-              -
-            {% endif %}
-          </td>
+            <th>Time</th>
+            <th>Type</th>
+            <th>Subject</th>
+            <th>Witness</th>
+            <th>Proxy?</th>
+            <th>Photo</th>
         </tr>
-      {% endfor %}
+        {% for e in today_events %}
+            <tr>
+                <td>{{ e.created_at }}</td>
+                <td>{{ e.event_type }}</td>
+                <td>{{ e.subject_employee.name }}</td>
+                <td>{% if e.witness_employee %}{{ e.witness_employee.name }}{% else %}-{% endif %}</td>
+                <td>{% if e.is_proxy %}<span class="pill">PROXY</span>{% else %}-{% endif %}</td>
+                <td>
+                    {% if e.photo %}
+                        <a href="{{ e.photo.url }}" target="_blank"><img src="{{ e.photo.url }}"/></a>
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
     </table>
-  </div>
+</div>
 </body>
 </html>

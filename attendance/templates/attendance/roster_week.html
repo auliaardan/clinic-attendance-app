@@ -1,0 +1,199 @@
+<!doctype html>
+{% load dict_extras %}
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Weekly Roster</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 16px;
+            max-width: 1200px;
+            margin: auto;
+        }
+
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+
+        .row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .right {
+            margin-left: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            vertical-align: top;
+        }
+
+        th {
+            position: sticky;
+            top: 0;
+            background: #fff;
+        }
+
+        .muted {
+            color: #666;
+            font-size: 13px;
+        }
+
+        select {
+            min-width: 180px;
+        }
+
+        .cell {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .multi {
+            width: 100%;
+            min-height: 92px;
+        }
+
+        .pill {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #f3f3f3;
+            font-size: 12px;
+        }
+
+        .warn {
+            background: #fff4d6;
+        }
+    </style>
+</head>
+<body>
+
+<div class="row">
+    <h2 style="margin:0;">Weekly Roster</h2>
+    <div class="right"><a href="/manager/">Back to dashboard</a></div>
+</div>
+
+{% if error %}
+    <div class="card"><span class="pill warn">{{ error }}</span></div>
+{% else %}
+
+    <div class="card">
+        <form method="get" class="row">
+            <div>
+                <div class="muted">Division</div>
+                <select name="division" onchange="this.form.submit()">
+                    {% for d in divisions %}
+                        <option value="{{ d.id }}" {% if d.id == division.id %}selected{% endif %}>{{ d.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div>
+                <div class="muted">Week starting (Monday)</div>
+                <input type="date" name="week_start" value="{{ week_start|date:'Y-m-d' }}"
+                       onchange="this.form.submit()">
+            </div>
+
+            <div class="right muted">
+                Tip: Hold <b>Ctrl</b> / <b>Cmd</b> to select multiple shifts (e.g. Morning + Afternoon).
+            </div>
+        </form>
+    </div>
+
+    <div class="card">
+        <form method="post">
+            {% csrf_token %}
+            <div class="row" style="margin-bottom:10px;">
+                <div class="muted">Editing: <b>{{ division.name }}</b> · Week: <b>{{ week_start }}</b></div>
+                <div class="right">
+                    <button type="submit">Save roster</button>
+                </div>
+            </div>
+
+            <table>
+                <tr>
+                    <th style="width:220px;">Staff</th>
+                    {% for d in days %}
+                        <th>{{ d|date:"D" }}<br><span class="muted">{{ d|date:"d M" }}</span></th>
+                    {% endfor %}
+                </tr>
+
+                {% for emp in employees %}
+                    <tr>
+                        <td><b>{{ emp.name }}</b></td>
+
+                        {% for d in days %}
+                            <td>
+                                <div class="cell">
+                                    {% with key=emp.id|stringformat:"s"|add:":"|add:d|date:"Y-m-d" %}
+                                        {% with sel=selected_ids|get:key %}
+                                            <select class="multi" multiple
+                                                    name="shifts_{{ emp.id }}_{{ d|date:'Y-m-d' }}">
+                                                {% for t in templates %}
+                                                    <option value="{{ t.id }}"
+                                                            {% if sel and t.id in sel %}selected{% endif %}>
+                                                        {{ t.name }} ({{ t.start_time }}–{{ t.end_time }})
+                                                    </option>
+                                                {% endfor %}
+                                            </select>
+                                        {% endwith %}
+
+                                        {% with ex=existing_map|get:key %}
+                                            {% if ex %}
+                                                <div class="muted">
+                                                    Existing:
+                                                    {% for a in ex %}
+                                                        <span class="pill">
+            {{ a.template.name }} ({{ a.start_time }}-{{ a.end_time }}) · {{ a.status }}
+          </span>
+                                                    {% endfor %}
+                                                </div>
+                                            {% endif %}
+                                        {% endwith %}
+                                    {% endwith %}
+
+                                </div>
+                            </td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </table>
+        </form>
+    </div>
+
+    {% if is_manager %}
+        <div class="card">
+            <form method="post" action="/roster/approve/" class="row">
+                {% csrf_token %}
+                <input type="hidden" name="division" value="{{ division.id }}">
+                <input type="hidden" name="week_start" value="{{ week_start|date:'Y-m-d' }}">
+                <div class="muted">Manager action: approve this week roster.</div>
+                <div class="right">
+                    <button type="submit">Approve week</button>
+                </div>
+            </form>
+        </div>
+    {% else %}
+        <div class="card">
+            <span class="pill warn">Saved roster will be SUBMITTED. Manager must approve for punctuality calculations.</span>
+        </div>
+    {% endif %}
+
+{% endif %}
+</body>
+</html>
