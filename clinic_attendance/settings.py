@@ -130,3 +130,6 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CSRF_TRUSTED_ORIGINS = [ h.strip() for h in env("CSRF_TRUSTED_ORIGINS").split(",") if h.strip() ]
 
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/roster/"
+LOGOUT_REDIRECT_URL = "/"
