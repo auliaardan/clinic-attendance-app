@@ -132,4 +132,4 @@ CSRF_TRUSTED_ORIGINS = [ h.strip() for h in env("CSRF_TRUSTED_ORIGINS").split(",
 
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/roster/"
-LOGOUT_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/accounts/login/"

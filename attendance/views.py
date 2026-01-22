@@ -555,7 +555,7 @@ def roster_week(request):
         division=division,
         date__in=days,
         employee__in=employees
-    ).select_related("template", "employee")
+    ).select_related("template", "employee").order_by("start_time")
 
     # Map: (emp_id, date) -> list[ShiftAssignment]
     existing_map = {}
@@ -602,6 +602,12 @@ def roster_week(request):
             k = f"{emp.id}:{d.isoformat()}"
             selected_ids[k] = [a.template_id for a in existing_map.get(k, []) if a.template_id]
 
+    has_unapproved = ShiftAssignment.objects.filter(
+        division=division,
+        date__in=days,
+        status__in=["DRAFT", "SUBMITTED"],
+    ).exists()
+
     context = {
         "division": division,
         "divisions": divisions_qs.order_by("name"),
@@ -612,6 +618,7 @@ def roster_week(request):
         "existing_map": existing_map,
         "selected_ids": selected_ids,
         "is_manager": request.user.is_staff,
+        "has_unapproved": has_unapproved,
     }
     return render(request, "attendance/roster_week.html", context)
 

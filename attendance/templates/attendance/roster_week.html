@@ -13,6 +13,14 @@
             margin: auto;
         }
 
+        th:first-child, td:first-child {
+            position: sticky;
+            left: 0;
+            background: #fff;
+            z-index: 3;
+            border-right: 1px solid #eee;
+        }
+
         .card {
             border: 1px solid #ddd;
             border-radius: 12px;
@@ -85,8 +93,21 @@
 
 <div class="row">
     <h2 style="margin:0;">Weekly Roster</h2>
-    <div class="right"><a href="/manager/">Back to dashboard</a></div>
+
+    <div class="right row" style="gap:12px;">
+        <div class="muted">Hi, <b>{{ request.user.username }}</b></div>
+
+        <form method="post" action="{% url 'logout' %}" style="margin:0;">
+            {% csrf_token %}
+            <button type="submit" style="padding:8px 12px;border-radius:10px;border:1px solid #ddd;background:#fff;">
+                Logout
+            </button>
+        </form>
+
+        <a href="/manager/">Back to dashboard</a>
+    </div>
 </div>
+
 
 {% if error %}
     <div class="card"><span class="pill warn">{{ error }}</span></div>
@@ -141,6 +162,7 @@
                             <td>
                                 <div class="cell">
                                     {% with key=emp.id|stringformat:"s"|add:":"|add:d|date:"Y-m-d" %}
+
                                         {% with sel=selected_ids|get:key %}
                                             <select class="multi" multiple
                                                     name="shifts_{{ emp.id }}_{{ d|date:'Y-m-d' }}">
@@ -156,7 +178,7 @@
                                         {% with ex=existing_map|get:key %}
                                             {% if ex %}
                                                 <div class="muted">
-                                                    Existing:
+                                                    Saved:
                                                     {% for a in ex %}
                                                         <span class="pill">
             {{ a.template.name }} ({{ a.start_time }}-{{ a.end_time }}) · {{ a.status }}
@@ -165,8 +187,8 @@
                                                 </div>
                                             {% endif %}
                                         {% endwith %}
-                                    {% endwith %}
 
+                                    {% endwith %}
                                 </div>
                             </td>
                         {% endfor %}
@@ -176,7 +198,7 @@
         </form>
     </div>
 
-    {% if is_manager %}
+    {% if is_manager and has_unapproved %}
         <div class="card">
             <form method="post" action="/roster/approve/" class="row">
                 {% csrf_token %}
