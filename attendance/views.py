@@ -1,9 +1,10 @@
 from datetime import timedelta, datetime, date
 from io import BytesIO
-from django.db import models
+
 from PIL import Image, ImageOps
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.files.base import ContentFile
+from django.db import models
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404, redirect
 from django.utils import timezone
@@ -69,6 +70,54 @@ def api_qr(request):
     token = make_qr_token(window_seconds=60)
     meta = window_meta(window_seconds=60)
     return JsonResponse({"token": token, **meta})
+
+
+@require_GET
+def api_employee_status(request):
+    employee_id = request.GET.get("employee_id", "")
+    try:
+        emp = Employee.objects.get(id=employee_id, is_active=True)
+    except Employee.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Invalid employee"}, status=404)
+
+    open_session = (
+        AttendanceSession.objects
+        .filter(employee=emp, is_open=True)
+        .order_by("-id")
+        .first()
+    )
+
+    # For clarity:
+    # - if open_session exists => currently "IN" (working) => next_action should be "OUT"
+    # - else => currently "OUT" (not checked-in) => next_action should be "IN"
+    if open_session and open_session.clock_in_time and not open_session.clock_out_time:
+        return JsonResponse({
+            "ok": True,
+            "employee_id": emp.id,
+            "employee_name": emp.name,
+            "current_state": "IN",
+            "next_action": "OUT",
+            "since": timezone.localtime(open_session.clock_in_time).isoformat(),
+        })
+
+    # no open session
+    last_session = (
+        AttendanceSession.objects
+        .filter(employee=emp)
+        .exclude(clock_in_time__isnull=True)
+        .order_by("-id")
+        .first()
+    )
+
+    return JsonResponse({
+        "ok": True,
+        "employee_id": emp.id,
+        "employee_name": emp.name,
+        "current_state": "OUT",
+        "next_action": "IN",
+        "since": timezone.localtime(last_session.clock_out_time).isoformat()
+        if last_session and last_session.clock_out_time else None,
+    })
 
 
 @require_GET
@@ -237,7 +286,6 @@ def manager_dashboard(request):
             "count": row["count"],
             "week_start": week_start,
         })
-
 
     # --- LEAVE (approved) ---
     approved_leave_today_emp_ids = set(
