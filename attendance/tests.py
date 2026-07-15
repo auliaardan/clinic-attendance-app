@@ -53,7 +53,7 @@ from django.db import IntegrityError
 from django.test import override_settings
 from django.utils import timezone
 from PIL import Image
-from .models import AttendanceSession, ShiftAssignment, Division, ShiftTemplate, EmployeeProfile, LeaveRequest, PinAttempt
+from .models import AttendanceSession, ShiftAssignment, Division, ShiftTemplate, EmployeeProfile, LeaveRequest, PinAttempt, AttendanceCorrectionRequest
 from .services import classify_shift
 
 
@@ -211,3 +211,68 @@ class PhaseTwoManagerOperationsTests(TestCase):
             missing = AttendanceEvent.objects.create(event_type="OUT", session=sess, subject_employee=self.emp, created_at=old, photo="missing.jpg")
             call_command("purge_attendance_photos", "--older-than-days", "90", "--confirm")
             self.assertTrue(AttendanceEvent.objects.filter(id=missing.id).exists())
+
+class PhaseThreeEmployeeSelfServiceTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.manager = User.objects.create_user("mgr3", password="pw", is_staff=True)
+        self.emp = pin_employee("Dina", "123456")
+        self.other = pin_employee("Eko", "654321")
+        self.div = Division.objects.create(name="Front")
+        EmployeeProfile.objects.create(employee=self.emp, division=self.div)
+        EmployeeProfile.objects.create(employee=self.other, division=self.div)
+
+    def login_employee(self, pin="123456"):
+        return self.client.post(reverse("employee_login"), {"employee": self.emp.id, "pin": pin})
+
+    def test_employee_pin_login_logout_and_dashboard_ownership(self):
+        old_key = self.client.session.session_key
+        response = self.login_employee()
+        self.assertEqual(response.status_code, 302)
+        self.assertNotEqual(self.client.session.session_key, old_key)
+        LeaveRequest.objects.create(employee=self.emp, date_from=timezone.localdate(), date_to=timezone.localdate(), note="Mine")
+        LeaveRequest.objects.create(employee=self.other, date_from=timezone.localdate(), date_to=timezone.localdate(), note="OtherSecret")
+        response = self.client.get(reverse("employee_dashboard"))
+        self.assertContains(response, "Dina")
+        self.assertContains(response, "Mine")
+        self.assertNotContains(response, "OtherSecret")
+        self.assertEqual(self.client.post(reverse("employee_logout")).status_code, 302)
+        self.assertNotIn("employee_id", self.client.session)
+
+    def test_wrong_pin_locks_employee_login(self):
+        for _ in range(5):
+            self.login_employee("000000")
+        self.assertEqual(self.login_employee("000000").status_code, 200)
+        self.assertTrue(PinAttempt.objects.filter(employee=self.emp, purpose="EMPLOYEE_LOGIN", locked_until__gt=timezone.now()).exists())
+
+    def test_leave_validation_and_employee_cannot_approve(self):
+        self.login_employee()
+        today = timezone.localdate()
+        self.assertContains(self.client.post(reverse("employee_leave_new"), {"date_from": today, "date_to": today - timedelta(days=1), "leave_type": "SICK", "note": "x"}), "Tanggal selesai")
+        self.assertEqual(self.client.post(reverse("employee_leave_new"), {"date_from": today, "date_to": today, "leave_type": "SICK", "note": "x"}).status_code, 302)
+        leave = LeaveRequest.objects.get(employee=self.emp)
+        self.assertEqual(leave.status, "SUBMITTED")
+        self.assertEqual(self.client.post(reverse("manager_leave_action", args=[leave.id, "approve"])).status_code, 302)
+        leave.refresh_from_db(); self.assertEqual(leave.status, "SUBMITTED")
+
+    def test_correction_lifecycle_does_not_rewrite_attendance(self):
+        sess = AttendanceSession.objects.create(employee=self.emp, clock_in_time=timezone.now(), is_open=True)
+        original_in = sess.clock_in_time
+        self.login_employee()
+        response = self.client.post(reverse("employee_correction_new"), {"session": sess.id, "request_type": "WRONG_TIME", "requested_clock_in": "2026-01-01T09:00", "reason": "Jam salah"})
+        self.assertEqual(response.status_code, 302)
+        corr = AttendanceCorrectionRequest.objects.get(employee=self.emp)
+        dup = self.client.post(reverse("employee_correction_new"), {"session": sess.id, "request_type": "WRONG_TIME", "reason": "dupe"})
+        self.assertContains(dup, "masih menunggu")
+        self.client.logout(); self.client.login(username="mgr3", password="pw")
+        self.assertEqual(self.client.post(reverse("manager_correction_action", args=[corr.id, "approve"]), {"manager_note": "ok"}).status_code, 302)
+        corr.refresh_from_db(); sess.refresh_from_db()
+        self.assertEqual(corr.status, "APPROVED")
+        self.assertEqual(sess.clock_in_time, original_in)
+
+    def test_manager_review_requires_manager_and_post_only(self):
+        self.assertEqual(self.client.get(reverse("manager_requests")).status_code, 302)
+        self.login_employee()
+        self.assertEqual(self.client.get(reverse("manager_requests")).status_code, 302)
+        self.client.logout(); self.client.login(username="mgr3", password="pw")
+        self.assertEqual(self.client.get(reverse("manager_requests")).status_code, 200)

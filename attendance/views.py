@@ -536,3 +536,128 @@ def approve_roster_week(request):
     ).update(status="APPROVED", approved_by=request.user)
 
     return redirect(f"/roster/?division={division_id}&week_start={week_start.isoformat()}")
+
+from django.contrib import messages
+from django.views.decorators.cache import never_cache
+from .forms import EmployeeLoginForm, EmployeeLeaveRequestForm, AttendanceCorrectionRequestForm
+from .models import AttendanceCorrectionRequest
+
+EMP_SESSION_KEY = "employee_id"
+EMP_AUTH_TS_KEY = "employee_authenticated_at"
+EMP_PURPOSE = "EMPLOYEE_LOGIN"
+
+def _employee_session_employee(request):
+    emp_id = request.session.get(EMP_SESSION_KEY)
+    ts = request.session.get(EMP_AUTH_TS_KEY)
+    if not emp_id or not ts:
+        return None
+    try:
+        auth_at = datetime.fromisoformat(ts)
+        if timezone.is_naive(auth_at): auth_at = timezone.make_aware(auth_at)
+    except (TypeError, ValueError):
+        request.session.flush(); return None
+    if timezone.now() - auth_at > timedelta(minutes=30):
+        request.session.flush(); return None
+    request.session[EMP_AUTH_TS_KEY] = timezone.now().isoformat()
+    request.session.set_expiry(1800)
+    try:
+        return Employee.objects.select_related("profile", "profile__division").get(id=emp_id, is_active=True)
+    except Employee.DoesNotExist:
+        request.session.flush(); return None
+
+def employee_required(view_func):
+    def wrapper(request, *args, **kwargs):
+        emp = _employee_session_employee(request)
+        if not emp: return redirect("employee_login")
+        request.employee = emp
+        return view_func(request, *args, **kwargs)
+    return never_cache(wrapper)
+
+@never_cache
+@require_http_methods(["GET", "POST"])
+def employee_login(request):
+    if request.method == "POST":
+        form = EmployeeLoginForm(request.POST)
+        if form.is_valid():
+            emp = form.cleaned_data["employee"]; ip = get_client_ip(request) or "0.0.0.0"
+            ok, _ = verify_pin_or_response(emp, form.cleaned_data["pin"], ip, EMP_PURPOSE)
+            if ok:
+                request.session.flush(); request.session.cycle_key()
+                request.session[EMP_SESSION_KEY] = emp.id
+                request.session[EMP_AUTH_TS_KEY] = timezone.now().isoformat()
+                request.session.set_expiry(1800)
+                return redirect("employee_dashboard")
+            form.add_error(None, "Nama staff atau PIN tidak valid, atau akun terkunci sementara.")
+    else:
+        form = EmployeeLoginForm()
+    return render(request, "attendance/employee_login.html", {"form": form})
+
+@require_http_methods(["POST"])
+def employee_logout(request):
+    request.session.flush()
+    return redirect("employee_login")
+
+@employee_required
+def employee_dashboard(request):
+    emp=request.employee; today=timezone.localdate(); now=timezone.now()
+    sessions=list(AttendanceSession.objects.filter(employee=emp, clock_in_time__gte=now-timedelta(days=30)).order_by("-clock_in_time"))
+    shifts=list(ShiftAssignment.objects.filter(employee=emp, status="APPROVED", date__gte=today, date__lte=today+timedelta(days=14)).order_by("date","start_time"))
+    today_shifts=[s for s in shifts if s.date==today]
+    proxy_ids=set(AttendanceEvent.objects.filter(subject_employee=emp,is_proxy=True).values_list("session_id",flat=True))
+    history=[]
+    for s in sessions:
+        dur = s.clock_out_time - s.clock_in_time if s.clock_in_time and s.clock_out_time else None
+        history.append({"session":s,"duration":dur,"proxy":s.id in proxy_ids})
+    open_session=AttendanceSession.objects.filter(employee=emp,is_open=True).first()
+    return render(request,"attendance/employee_dashboard.html",{"employee":emp,"division":getattr(getattr(emp,"profile",None),"division",None),"state":"IN" if open_session else "OUT","today_shifts":today_shifts,"roster":shifts,"history":history,"leave_requests":LeaveRequest.objects.filter(employee=emp).order_by("-created_at")[:20],"correction_requests":AttendanceCorrectionRequest.objects.filter(employee=emp).order_by("-created_at")[:20]})
+
+@employee_required
+@require_http_methods(["GET","POST"])
+def employee_leave_new(request):
+    form=EmployeeLeaveRequestForm(request.POST or None, employee=request.employee)
+    if request.method=="POST" and form.is_valid():
+        form.save(); messages.success(request,"Pengajuan cuti terkirim."); return redirect("employee_dashboard")
+    return render(request,"attendance/employee_form.html",{"form":form,"title":"Ajukan Cuti"})
+
+@employee_required
+@require_http_methods(["GET","POST"])
+def employee_correction_new(request):
+    form=AttendanceCorrectionRequestForm(request.POST or None, employee=request.employee)
+    if request.method=="POST" and form.is_valid():
+        form.save(); messages.success(request,"Pengajuan koreksi terkirim."); return redirect("employee_dashboard")
+    return render(request,"attendance/employee_form.html",{"form":form,"title":"Ajukan Koreksi Absensi"})
+
+@employee_required
+@require_http_methods(["POST"])
+def employee_correction_cancel(request, pk):
+    corr=get_object_or_404(AttendanceCorrectionRequest, pk=pk, employee=request.employee, status="SUBMITTED")
+    corr.status="CANCELLED"; corr.save(update_fields=["status"]); return redirect("employee_dashboard")
+
+@login_required
+@user_passes_test(is_manager)
+def manager_requests(request):
+    status=request.GET.get("status") or "SUBMITTED"; division=request.GET.get("division") or ""
+    leaves=LeaveRequest.objects.filter(status=status).select_related("employee","employee__profile","employee__profile__division")
+    corrections=AttendanceCorrectionRequest.objects.filter(status=status).select_related("employee","employee__profile","employee__profile__division","session")
+    if division.isdigit():
+        leaves=leaves.filter(employee__profile__division_id=division); corrections=corrections.filter(employee__profile__division_id=division)
+    return render(request,"attendance/manager_requests.html",{"leaves":leaves,"corrections":corrections,"status":status,"divisions":Division.objects.filter(is_active=True)})
+
+@login_required
+@user_passes_test(is_manager)
+@require_http_methods(["POST"])
+def manager_leave_action(request, pk, action):
+    obj=get_object_or_404(LeaveRequest, pk=pk, status="SUBMITTED")
+    if action in ("approve","reject"):
+        obj.status="APPROVED" if action=="approve" else "REJECTED"; obj.approved_by=request.user; obj.save(update_fields=["status","approved_by"])
+    return redirect("manager_requests")
+
+@login_required
+@user_passes_test(is_manager)
+@require_http_methods(["POST"])
+def manager_correction_action(request, pk, action):
+    obj=get_object_or_404(AttendanceCorrectionRequest, pk=pk, status="SUBMITTED")
+    if action in ("approve","reject"):
+        obj.status="APPROVED" if action=="approve" else "REJECTED"; obj.reviewed_by=request.user; obj.reviewed_at=timezone.now(); obj.manager_note=request.POST.get("manager_note","")[:1000]
+        obj.save(update_fields=["status","reviewed_by","reviewed_at","manager_note"])
+    return redirect("manager_requests")
