@@ -1,0 +1,46 @@
+name: Django tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Django system checks
+        env:
+          DJANGO_SECRET_KEY: ci-only-secret-key
+          DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+          CSRF_TRUSTED_ORIGINS: http://localhost
+        run: python manage.py check
+
+      - name: Check migration consistency
+        env:
+          DJANGO_SECRET_KEY: ci-only-secret-key
+          DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+          CSRF_TRUSTED_ORIGINS: http://localhost
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Run tests
+        env:
+          DJANGO_SECRET_KEY: ci-only-secret-key
+          DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+          CSRF_TRUSTED_ORIGINS: http://localhost
+        run: python manage.py test
