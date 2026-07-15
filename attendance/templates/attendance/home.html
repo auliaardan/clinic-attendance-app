@@ -147,7 +147,10 @@
 
         <div class="mb-3">
             <label class="form-label">Selfie</label>
-            <input id="photo" class="form-control" type="file" accept="image/*" capture="user"/>
+            <video id="cameraPreview" class="w-100 rounded border" autoplay playsinline muted></video>
+            <canvas id="captureCanvas" class="d-none"></canvas>
+            <div id="cameraFallback" class="mt-2 d-none"><div class="alert alert-warning py-2">Fallback kompatibilitas: kamera langsung tidak tersedia. Upload foto tetap divalidasi server.</div><input id="photo" class="form-control" type="file" accept="image/*" capture="user"/></div>
+            <div class="d-flex gap-2 mt-2"><button class="btn btn-primary" type="button" id="captureBtn" onclick="captureSelfie()">Capture</button><button class="btn btn-outline-secondary" type="button" id="retakeBtn" onclick="retakeSelfie()" disabled>Retake</button></div>
         </div>
 
         <button id="submitBtn" class="btn btn-success w-100" type="button" onclick="submitClock()">
@@ -167,6 +170,8 @@
     let scannedToken = "";
     let countdownTimer = null;
     let expiresIn = 0;
+    let cameraStream = null;
+    let capturedBlob = null;
 
     const html5QrCode = new Html5Qrcode("reader");
     let scanning = false;
@@ -174,6 +179,7 @@
     window.addEventListener("load", () => {
         startScanning();
         refreshStatus();
+        startSelfieCamera();
     });
 
     // ======= UI helpers =======
@@ -327,6 +333,41 @@
         await startScanning();
     }
 
+    async function startSelfieCamera() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            document.getElementById("cameraFallback").classList.remove("d-none");
+            return;
+        }
+        try {
+            cameraStream = await navigator.mediaDevices.getUserMedia({video: {facingMode: "user"}, audio: false});
+            document.getElementById("cameraPreview").srcObject = cameraStream;
+        } catch (e) {
+            document.getElementById("cameraFallback").classList.remove("d-none");
+        }
+    }
+    function stopSelfieCamera() {
+        if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+        cameraStream = null;
+    }
+    async function captureSelfie() {
+        const video = document.getElementById("cameraPreview");
+        const canvas = document.getElementById("captureCanvas");
+        if (!video.videoWidth) { setResult("❌ Kamera belum siap."); return; }
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        canvas.getContext("2d").drawImage(video, 0, 0);
+        capturedBlob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.75));
+        document.getElementById("captureBtn").disabled = true;
+        document.getElementById("retakeBtn").disabled = false;
+        setResult("✅ Selfie siap dikirim.");
+    }
+    function retakeSelfie() {
+        capturedBlob = null;
+        document.getElementById("captureBtn").disabled = false;
+        document.getElementById("retakeBtn").disabled = true;
+        setResult("");
+    }
+    window.addEventListener("beforeunload", stopSelfieCamera);
+
     async function resizeImage(file, maxSide = 1024, quality = 0.75) {
         const img = new Image();
         const url = URL.createObjectURL(file);
@@ -372,7 +413,8 @@
         const witnessId = document.getElementById("witness_employee_id").value;
         const witnessPin = document.getElementById("witness_pin").value;
 
-        const photoFile = document.getElementById("photo").files[0];
+        const fallbackInput = document.getElementById("photo");
+        const photoFile = fallbackInput ? fallbackInput.files[0] : null;
         const submitBtn = document.getElementById("submitBtn");
 
         if (!scannedToken) {
@@ -383,8 +425,8 @@
             setResult("❌ PIN staff wajib.");
             return;
         }
-        if (!photoFile) {
-            setResult("❌ Selfie wajib.");
+        if (!capturedBlob && !photoFile) {
+            setResult("❌ Capture selfie dulu.");
             return;
         }
         if (isProxy && !witnessPin) {
@@ -393,7 +435,7 @@
         }
 
         submitBtn.disabled = true;
-        const resizedBlob = await resizeImage(photoFile, 1024, 0.75); // maxSide=1024, quality=0.75
+        const resizedBlob = capturedBlob || await resizeImage(photoFile, 1024, 0.75);
 
         const form = new FormData();
         form.append("action", currentAction);
@@ -419,7 +461,9 @@
                 stopCountdown();
                 document.getElementById("qrToken").textContent = "-";
                 setQRUI("Not scanned", null);
-                document.getElementById("photo").value = "";
+                if (document.getElementById("photo")) document.getElementById("photo").value = "";
+                retakeSelfie();
+                stopSelfieCamera();
                 startScanning();
                 await refreshStatus();
 

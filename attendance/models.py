@@ -196,3 +196,27 @@ class PinAttempt(models.Model):
     class Meta:
         unique_together = ("employee", "client_ip", "purpose")
         indexes = [models.Index(fields=["employee", "client_ip", "purpose"]), models.Index(fields=["last_failed_at"])]
+
+class AttendanceCorrectionRequest(models.Model):
+    REQUEST_TYPES = (("FORGOT_CLOCK_IN","Forgot clock in"),("FORGOT_CLOCK_OUT","Forgot clock out"),("WRONG_TIME","Wrong time"),("WRONG_ACTION","Wrong action"),("OTHER","Other"))
+    STATUS = (("SUBMITTED","Submitted"),("APPROVED","Approved"),("REJECTED","Rejected"),("CANCELLED","Cancelled"))
+    employee = models.ForeignKey("Employee", on_delete=models.CASCADE, related_name="correction_requests")
+    session = models.ForeignKey("AttendanceSession", on_delete=models.SET_NULL, null=True, blank=True, related_name="correction_requests")
+    request_type = models.CharField(max_length=32, choices=REQUEST_TYPES)
+    requested_clock_in = models.DateTimeField(null=True, blank=True)
+    requested_clock_out = models.DateTimeField(null=True, blank=True)
+    reason = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS, default="SUBMITTED")
+    created_at = models.DateTimeField(default=timezone.now)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    manager_note = models.TextField(blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["employee", "session", "request_type"], condition=Q(status="SUBMITTED"), name="uniq_submitted_correction_per_session_type"),
+        ]
+        indexes = [models.Index(fields=["employee", "status", "created_at"]), models.Index(fields=["status", "created_at"])]
+
+    def __str__(self):
+        return f"{self.employee.name} {self.request_type} ({self.status})"
