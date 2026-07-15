@@ -22,12 +22,12 @@ env.read_env()
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = env("DJANGO_SECRET_KEY")
+SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-insecure-secret-key-change-me")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DEBUG", default=False)
 
-ALLOWED_HOSTS = [h.strip() for h in env("DJANGO_ALLOWED_HOSTS").split(",") if h.strip()]
+ALLOWED_HOSTS = [h.strip() for h in env("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1,testserver").split(",") if h.strip()]
 
 
 # Application definition
@@ -128,7 +128,13 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CSRF_TRUSTED_ORIGINS = [ h.strip() for h in env("CSRF_TRUSTED_ORIGINS").split(",") if h.strip() ]
+CSRF_TRUSTED_ORIGINS = [ h.strip() for h in env("CSRF_TRUSTED_ORIGINS", default="").split(",") if h.strip() ]
+
+ATTENDANCE_EARLY_WINDOW_MINUTES = env.int("ATTENDANCE_EARLY_WINDOW_MINUTES", default=60)
+ATTENDANCE_GRACE_PERIOD_MINUTES = env.int("ATTENDANCE_GRACE_PERIOD_MINUTES", default=15)
+ATTENDANCE_NO_SHOW_THRESHOLD_MINUTES = env.int("ATTENDANCE_NO_SHOW_THRESHOLD_MINUTES", default=120)
+ATTENDANCE_MISSING_CLOCKOUT_TOLERANCE_MINUTES = env.int("ATTENDANCE_MISSING_CLOCKOUT_TOLERANCE_MINUTES", default=60)
+ATTENDANCE_LONG_OPEN_SESSION_THRESHOLD_HOURS = env.int("ATTENDANCE_LONG_OPEN_SESSION_THRESHOLD_HOURS", default=10)
 
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/roster/"
