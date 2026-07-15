@@ -276,3 +276,64 @@ class PhaseThreeEmployeeSelfServiceTests(TestCase):
         self.assertEqual(self.client.get(reverse("manager_requests")).status_code, 302)
         self.client.logout(); self.client.login(username="mgr3", password="pw")
         self.assertEqual(self.client.get(reverse("manager_requests")).status_code, 200)
+
+class PhaseFourNavigationPortalUxTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.manager = User.objects.create_user("phase4mgr", password="pw", is_staff=True)
+        self.user = User.objects.create_user("phase4user", password="pw")
+        self.emp = pin_employee("Nina Staff", "123456")
+
+    def test_landing_page_links_to_major_workflows_and_logged_out_employee_login(self):
+        response = self.client.get(reverse("home"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Mulai Absensi")
+        self.assertContains(response, reverse("attendance_page"))
+        self.assertContains(response, "Portal Staff")
+        self.assertContains(response, reverse("employee_login"))
+        self.assertContains(response, "Portal Manager")
+        self.assertContains(response, reverse("manager_dashboard"))
+
+    def test_attendance_page_loads_existing_interface_and_keeps_api_urls(self):
+        response = self.client.get(reverse("attendance_page"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Scan QR • Selfie • PIN")
+        self.assertContains(response, 'fetch(`/api/qr/check/?token=${encodeURIComponent(token)}`)')
+        self.assertContains(response, 'fetch("/api/clock/", {method: "POST", body: form})')
+
+    def test_valid_employee_session_changes_link_to_dashboard(self):
+        self.client.post(reverse("employee_login"), {"employee": self.emp.id, "pin": "123456"})
+        response = self.client.get(reverse("home"))
+        self.assertContains(response, reverse("employee_dashboard"))
+        self.assertContains(response, "Nina Staff")
+
+    def test_expired_employee_session_does_not_expose_identity(self):
+        session = self.client.session
+        session["employee_id"] = self.emp.id
+        session["employee_authenticated_at"] = (timezone.now() - timedelta(minutes=31)).isoformat()
+        session.save()
+        response = self.client.get(reverse("home"))
+        self.assertNotContains(response, "Nina Staff")
+        self.assertContains(response, reverse("employee_login"))
+
+    def test_employee_logout_post_only_and_csrf_protected(self):
+        self.client.post(reverse("employee_login"), {"employee": self.emp.id, "pin": "123456"})
+        self.assertEqual(self.client.get(reverse("employee_logout")).status_code, 405)
+        from django.test import Client
+        csrf_client = Client(enforce_csrf_checks=True)
+        self.assertEqual(csrf_client.post(reverse("employee_logout")).status_code, 403)
+
+    def test_manager_and_roster_navigation_does_not_bypass_authorization(self):
+        self.assertEqual(self.client.get(reverse("manager_dashboard")).status_code, 302)
+        self.assertEqual(self.client.get(reverse("roster_week")).status_code, 302)
+        self.client.login(username="phase4user", password="pw")
+        self.assertEqual(self.client.get(reverse("manager_dashboard")).status_code, 302)
+        response = self.client.get(reverse("home"))
+        self.assertNotContains(response, reverse("roster_week"))
+
+    def test_display_remains_standalone_without_shared_navigation(self):
+        response = self.client.get(reverse("qr_display"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "SCAN THIS QR")
+        self.assertNotContains(response, "navbar")
+        self.assertNotContains(response, "Portal Staff")

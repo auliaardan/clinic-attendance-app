@@ -75,7 +75,8 @@ def classify_shift(shift, sessions, now=None):
         missing_clockout = bool(matched_session.is_open and not matched_session.clock_out_time and now > end + timedelta(minutes=missing_clockout_tolerance_minutes()))
     covered = bool(matched_session) and matched_session.clock_in_time <= end
     if not covered:
-        if now >= checkin_deadline:
+        has_prior_session = any(s.clock_in_time and s.clock_in_time < window_start for s in sessions)
+        if now >= checkin_deadline or (has_prior_session and timezone.localtime(now).date() >= shift.date):
             return {"status": "NO_SHOW", "covered": False, "matched_in": matched_in, "qualifying_out": None, "minutes_late": None, "missing_clockout": False, "session": None}
         return {"status": "PENDING", "covered": False, "matched_in": matched_in, "qualifying_out": None, "minutes_late": None, "missing_clockout": False, "session": None}
     minutes = max(0, int((matched_in - start).total_seconds() // 60)) if matched_in else None
