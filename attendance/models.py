@@ -4,6 +4,7 @@ from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 
 
@@ -34,6 +35,11 @@ class AttendanceSession(models.Model):
     clock_in_time = models.DateTimeField(null=True, blank=True)
     clock_out_time = models.DateTimeField(null=True, blank=True)
     is_open = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["employee"], condition=Q(is_open=True), name="uniq_open_session_per_employee"),
+        ]
 
     def __str__(self):
         return f"{self.employee.name} ({'OPEN' if self.is_open else 'CLOSED'})"
@@ -175,3 +181,18 @@ class LeaveRequest(models.Model):
 
     def __str__(self):
         return f"{self.employee.name} {self.date_from}→{self.date_to} ({self.status})"
+
+
+class PinAttempt(models.Model):
+    PURPOSES = (("SUBJECT", "Subject"), ("WITNESS", "Witness"))
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="pin_attempts")
+    client_ip = models.GenericIPAddressField()
+    purpose = models.CharField(max_length=16, choices=PURPOSES)
+    failures = models.PositiveIntegerField(default=0)
+    first_failed_at = models.DateTimeField(default=timezone.now)
+    last_failed_at = models.DateTimeField(default=timezone.now)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ("employee", "client_ip", "purpose")
+        indexes = [models.Index(fields=["employee", "client_ip", "purpose"]), models.Index(fields=["last_failed_at"])]

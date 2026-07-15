@@ -63,6 +63,7 @@ class AttendanceSessionAdmin(admin.ModelAdmin):
     list_display = ("id", "employee", "clock_in_time", "clock_out_time", "is_open")
     list_filter = ("is_open",)
     search_fields = ("employee__name",)
+    readonly_fields = ("employee", "clock_in_time", "clock_out_time")
 
 
 @admin.register(AttendanceEvent)
@@ -70,3 +71,12 @@ class AttendanceEventAdmin(admin.ModelAdmin):
     list_display = ("id", "event_type", "subject_employee", "witness_employee", "created_at", "is_proxy", "client_ip")
     list_filter = ("event_type", "is_proxy", "created_at")
     search_fields = ("subject_employee__name", "witness_employee__name")
+    readonly_fields = ("event_type", "session", "subject_employee", "witness_employee", "created_at", "photo", "client_ip", "user_agent", "is_proxy", "note")
+
+    def has_change_permission(self, request, obj=None):
+        if obj is not None:
+            return False
+        return super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
