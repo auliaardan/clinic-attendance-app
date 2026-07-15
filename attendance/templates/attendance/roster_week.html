@@ -142,12 +142,13 @@
             </div>
         {% endif %}
 
+        {% if is_locked %}<div class="pill warn">This submitted/approved week is locked/read-only.</div>{% endif %}
         <form method="post">
             {% csrf_token %}
             <div class="row" style="margin-bottom:10px;">
                 <div class="muted">Editing: <b>{{ division.name }}</b> · Week: <b>{{ week_start }}</b></div>
                 <div class="right">
-                    {% if not is_manager %}
+                    {% if not is_manager and not is_locked %}
                         <button type="submit">Save roster</button>
                     {% endif %}
                 </div>
@@ -173,7 +174,7 @@
                                             {% with sel=selected_ids|get:key %}
                                                 <select class="multi" multiple
                                                         name="shifts_{{ emp.id }}_{{ ds }}"
-                                                        {% if is_manager %}disabled{% endif %}>
+                                                        {% if is_manager or is_locked %}disabled{% endif %}>
                                                     {% for t in templates %}
                                                         <option value="{{ t.id }}"
                                                                 {% if sel and t.id in sel %}selected{% endif %}>

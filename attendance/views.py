@@ -1,10 +1,10 @@
 from datetime import timedelta, datetime, date
 from io import BytesIO
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.files.base import ContentFile
-from django.db import models
+from django.db import IntegrityError, models, transaction
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404, redirect
 from django.utils import timezone
@@ -21,6 +21,8 @@ from .models import (
     EmployeeProfile, ShiftTemplate
 )
 from .qr import make_qr_token, window_meta, token_expires_in
+from .services import classify_shift, session_overlaps_shift, aware_combine as dt_combine, GRACE_MINUTES, NO_SHOW_MINUTES, EARLY_WINDOW_MINUTES
+from .models import PinAttempt
 
 
 def recompress_image(uploaded_file, *, max_side=1024, quality=75) -> ContentFile:
@@ -28,8 +30,14 @@ def recompress_image(uploaded_file, *, max_side=1024, quality=75) -> ContentFile
     Convert uploaded image to JPEG, auto-rotate by EXIF, and resize so longest edge <= max_side.
     Returns a Django ContentFile ready to assign to ImageField.
     """
-    img = Image.open(uploaded_file)
-    img = ImageOps.exif_transpose(img)  # fix iPhone/Android rotation
+    try:
+        img = Image.open(uploaded_file)
+        img.verify()
+        uploaded_file.seek(0)
+        img = Image.open(uploaded_file)
+        img = ImageOps.exif_transpose(img)
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise ValueError("Invalid photo upload")  # fix iPhone/Android rotation
 
     # Convert to RGB for JPEG (handles PNG with alpha, etc.)
     if img.mode not in ("RGB", "L"):
@@ -131,6 +139,40 @@ def api_qr_check(request):
     })
 
 
+
+PIN_THRESHOLD = 5
+PIN_WINDOW = timedelta(minutes=15)
+PIN_LOCKOUT = timedelta(minutes=15)
+
+def pin_locked(employee, ip, purpose, now=None):
+    now = now or timezone.now()
+    rec = PinAttempt.objects.filter(employee=employee, client_ip=ip, purpose=purpose).first()
+    return bool(rec and rec.locked_until and rec.locked_until > now)
+
+def record_pin_success(employee, ip, purpose):
+    PinAttempt.objects.filter(employee=employee, client_ip=ip, purpose=purpose).delete()
+
+def record_pin_failure(employee, ip, purpose):
+    now = timezone.now()
+    rec, _ = PinAttempt.objects.get_or_create(employee=employee, client_ip=ip, purpose=purpose, defaults={"first_failed_at": now, "last_failed_at": now})
+    if now - rec.first_failed_at > PIN_WINDOW:
+        rec.failures = 0
+        rec.first_failed_at = now
+    rec.failures += 1
+    rec.last_failed_at = now
+    if rec.failures >= PIN_THRESHOLD:
+        rec.locked_until = now + PIN_LOCKOUT
+    rec.save()
+
+def verify_pin_or_response(employee, raw_pin, ip, purpose):
+    if pin_locked(employee, ip, purpose):
+        return False, JsonResponse({"ok": False, "error": "Too many attempts. Try again later."}, status=429)
+    if not employee.check_pin(raw_pin):
+        record_pin_failure(employee, ip, purpose)
+        return False, JsonResponse({"ok": False, "error": "Wrong PIN"}, status=403)
+    record_pin_success(employee, ip, purpose)
+    return True, None
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_clock(request):
@@ -163,8 +205,10 @@ def api_clock(request):
     except Employee.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Invalid employee"}, status=404)
 
-    if not subject.check_pin(subject_pin):
-        return JsonResponse({"ok": False, "error": "Wrong PIN"}, status=403)
+    ip = get_client_ip(request) or "0.0.0.0"
+    ok, response = verify_pin_or_response(subject, subject_pin, ip, "SUBJECT")
+    if not ok:
+        return response
 
     witness = None
     if is_proxy:
@@ -174,78 +218,56 @@ def api_clock(request):
             witness = Employee.objects.get(id=witness_id, is_active=True)
         except Employee.DoesNotExist:
             return JsonResponse({"ok": False, "error": "Invalid witness"}, status=404)
-        if not witness.check_pin(witness_pin):
-            return JsonResponse({"ok": False, "error": "Wrong witness PIN"}, status=403)
+        ok, response = verify_pin_or_response(witness, witness_pin, ip, "WITNESS")
+        if not ok:
+            return response
 
         if witness.id == subject.id:
             return JsonResponse({"ok": False, "error": "Witness cannot be the same person"}, status=400)
 
     # Now do the CPU work (recompress)
-    compressed = recompress_image(photo, max_side=1024, quality=75)
+    try:
+        compressed = recompress_image(photo, max_side=1024, quality=75)
+    except ValueError:
+        return JsonResponse({"ok": False, "error": "Invalid photo upload"}, status=400)
     filename = f"{subject.id}_{timezone.now().strftime('%Y%m%d_%H%M%S')}_{action}.jpg"
     photo_file = ContentFile(compressed.read(), name=filename)
 
     now = timezone.now()
-    open_session = AttendanceSession.objects.filter(employee=subject, is_open=True).order_by("-id").first()
+    with transaction.atomic():
+        subject = Employee.objects.select_for_update().get(id=subject.id)
+        open_session = (AttendanceSession.objects.select_for_update()
+                        .filter(employee=subject, is_open=True).order_by("-id").first())
 
-    if action == "IN":
-        if open_session and open_session.clock_in_time and not open_session.clock_out_time:
-            return JsonResponse({"ok": False, "error": "Already clocked in"}, status=409)
+        if action == "IN":
+            if open_session and open_session.clock_in_time and not open_session.clock_out_time:
+                return JsonResponse({"ok": False, "error": "Already clocked in"}, status=409)
+            try:
+                session = AttendanceSession.objects.create(employee=subject, clock_in_time=now, is_open=True)
+            except IntegrityError:
+                return JsonResponse({"ok": False, "error": "Already clocked in"}, status=409)
+            AttendanceEvent.objects.create(
+                event_type="IN", session=session, subject_employee=subject, witness_employee=witness,
+                photo=photo_file, client_ip=get_client_ip(request),
+                user_agent=request.META.get("HTTP_USER_AGENT", ""), is_proxy=is_proxy,
+                note="PROXY" if is_proxy else "")
+            return JsonResponse({"ok": True, "message": "Clock-in recorded", "time": now.isoformat()})
 
-        session = AttendanceSession.objects.create(
-            employee=subject,
-            clock_in_time=now,
-            is_open=True
-        )
-
+        if not open_session or not open_session.clock_in_time or open_session.clock_out_time:
+            return JsonResponse({"ok": False, "error": "No open session to clock out"}, status=409)
+        open_session.clock_out_time = now
+        open_session.is_open = False
+        open_session.save(update_fields=["clock_out_time", "is_open"])
         AttendanceEvent.objects.create(
-            event_type="IN",
-            session=session,
-            subject_employee=subject,
-            witness_employee=witness,
-            photo=photo_file,
-            client_ip=get_client_ip(request),
-            user_agent=request.META.get("HTTP_USER_AGENT", ""),
-            is_proxy=is_proxy,
-            note="PROXY" if is_proxy else ""
-        )
-
-        return JsonResponse({"ok": True, "message": "Clock-in recorded", "time": now.isoformat()})
-
-    # OUT
-    if not open_session or not open_session.clock_in_time or open_session.clock_out_time:
-        return JsonResponse({"ok": False, "error": "No open session to clock out"}, status=409)
-
-    open_session.clock_out_time = now
-    open_session.is_open = False
-    open_session.save(update_fields=["clock_out_time", "is_open"])
-
-    AttendanceEvent.objects.create(
-        event_type="OUT",
-        session=open_session,
-        subject_employee=subject,
-        witness_employee=witness,
-        photo=photo_file,  # ✅ compressed here too
-        client_ip=get_client_ip(request),
-        user_agent=request.META.get("HTTP_USER_AGENT", ""),
-        is_proxy=is_proxy,
-        note="PROXY" if is_proxy else ""
-    )
-
-    return JsonResponse({"ok": True, "message": "Clock-out recorded", "time": now.isoformat()})
+            event_type="OUT", session=open_session, subject_employee=subject, witness_employee=witness,
+            photo=photo_file, client_ip=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", ""), is_proxy=is_proxy,
+            note="PROXY" if is_proxy else "")
+        return JsonResponse({"ok": True, "message": "Clock-out recorded", "time": now.isoformat()})
 
 
 def is_manager(user):
     return user.is_authenticated and user.is_staff  # simple & best practice
-
-
-GRACE_MINUTES = 15
-NO_SHOW_MINUTES = 120
-EARLY_WINDOW_MINUTES = 60
-
-
-def dt_combine(d, t):
-    return timezone.make_aware(datetime.combine(d, t))
 
 
 @login_required
@@ -641,15 +663,18 @@ def roster_week(request):
     # Status control:
     # - manager can directly "APPROVE" on save if you want; here we keep it SUBMITTED unless manager hits approve.
     if request.method == "POST":
+        locked_exists = ShiftAssignment.objects.filter(division=division, date__in=days, status="APPROVED").exists()
+        if locked_exists and not request.user.is_staff:
+            return render(request, "attendance/roster_week.html", {"error": "This week contains approved assignments and is locked."}, status=403)
         # For each employee/day, we receive multi-select list: shifts_<empid>_<date> = [template_id, template_id...]
-        # We'll replace the day’s assignments entirely (delete then recreate).
+        # Replace unlocked assignments only.
         for emp in employees:
             for d in days:
                 key = f"shifts_{emp.id}_{d.isoformat()}"
                 selected_template_ids = request.POST.getlist(key)  # can be []
 
-                # delete all existing for that emp/day (within this division)
-                ShiftAssignment.objects.filter(employee=emp, division=division, date=d).delete()
+                # delete unlocked existing for that emp/day (within this division)
+                ShiftAssignment.objects.filter(employee=emp, division=division, date=d).exclude(status="APPROVED").delete()
 
                 for tid in selected_template_ids:
                     tmpl = next((t for t in templates if str(t.id) == str(tid)), None)
@@ -677,6 +702,10 @@ def roster_week(request):
             k = f"{emp.id}:{d.isoformat()}"
             selected_ids[k] = [a.template_id for a in existing_map.get(k, []) if a.template_id]
 
+    is_locked = ShiftAssignment.objects.filter(
+        division=division, date__in=days, status__in=["SUBMITTED", "APPROVED"]
+    ).exists()
+
     has_unapproved = ShiftAssignment.objects.filter(
         division=division,
         date__in=days,
@@ -694,6 +723,7 @@ def roster_week(request):
         "selected_ids": selected_ids,
         "is_manager": request.user.is_staff,
         "has_unapproved": has_unapproved,
+        "is_locked": is_locked,
     }
     return render(request, "attendance/roster_week.html", context)
 

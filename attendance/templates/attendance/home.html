@@ -150,7 +150,7 @@
             <input id="photo" class="form-control" type="file" accept="image/*" capture="user"/>
         </div>
 
-        <button class="btn btn-success w-100" onclick="submitClock()">
+        <button id="submitBtn" class="btn btn-success w-100" type="button" onclick="submitClock()">
             Submit Absensi
         </button>
 
@@ -373,8 +373,7 @@
         const witnessPin = document.getElementById("witness_pin").value;
 
         const photoFile = document.getElementById("photo").files[0];
-        const resizedBlob = await resizeImage(photoFile, 1024, 0.75); // maxSide=1024, quality=0.75
-
+        const submitBtn = document.getElementById("submitBtn");
 
         if (!scannedToken) {
             setResult("❌ Scan QR dulu.");
@@ -392,6 +391,9 @@
             setResult("❌ PIN saksi wajib (proxy).");
             return;
         }
+
+        submitBtn.disabled = true;
+        const resizedBlob = await resizeImage(photoFile, 1024, 0.75); // maxSide=1024, quality=0.75
 
         const form = new FormData();
         form.append("action", currentAction);
@@ -433,6 +435,8 @@
             }
         } catch (e) {
             setResult("❌ Network error");
+        } finally {
+            submitBtn.disabled = false;
         }
     }
 
