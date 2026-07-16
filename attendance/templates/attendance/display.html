@@ -1,78 +1,69 @@
 <!doctype html>
-<html>
+<html lang="id">
 <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>Clinic QR</title>
     <style>
-        body {
-            font-family: sans-serif;
-            text-align: center;
-            margin: 0;
-            padding: 24px;
-        }
-
-        .wrap {
-            display: grid;
-            place-items: center;
-            height: 100vh;
-        }
-
-        #qrcode {
-            margin: 16px auto;
-        }
-
-        .hint {
-            opacity: 0.7;
-        }
+        body { font-family: sans-serif; text-align: center; margin: 0; padding: 24px; background: #fff; }
+        .wrap { display: grid; place-items: center; min-height: calc(100vh - 48px); }
+        #qrImage { width: min(72vw, 420px); height: min(72vw, 420px); object-fit: contain; margin: 16px auto; background: #fff; }
+        .hint { opacity: .7; }
+        .error { color: #b00020; font-weight: 700; }
     </style>
 </head>
 <body>
 <div class="wrap">
     <div>
         <h1>SCAN THIS QR</h1>
-        <div id="qrcode"></div>
+        <img id="qrImage" alt="Attendance QR"/>
         <div class="hint">Updates every 60 seconds</div>
         <div id="ts" class="hint"></div>
+        <div id="error" class="error"></div>
     </div>
 </div>
-
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script>
-    const qrDiv = document.getElementById("qrcode");
+    const qrImage = document.getElementById("qrImage");
     const tsDiv = document.getElementById("ts");
-
+    const errorDiv = document.getElementById("error");
     let countdownTimer = null;
     let refreshTimer = null;
 
     function startCountdown(expiresAtEpoch) {
         if (countdownTimer) clearInterval(countdownTimer);
-
-        countdownTimer = setInterval(() => {
+        const render = () => {
             const now = Math.floor(Date.now() / 1000);
             const left = Math.max(0, expiresAtEpoch - now);
             tsDiv.textContent = `Server-synced: expires in ${left}s`;
-        }, 250);
+        };
+        render();
+        countdownTimer = setInterval(render, 250);
     }
 
     async function refreshQR() {
-        const res = await fetch("/api/qr/");
-        const data = await res.json();
-
-        qrDiv.innerHTML = "";
-        new QRCode(qrDiv, {text: data.token, width: 320, height: 320});
-
-        // sync countdown
-        startCountdown(data.expires_at);
-
-        // schedule next refresh precisely when server says it expires (+ 200ms buffer)
-        if (refreshTimer) clearTimeout(refreshTimer);
-        const ms = Math.max(200, (data.expires_in * 1000) + 200);
-        refreshTimer = setTimeout(refreshQR, ms);
+        try {
+            errorDiv.textContent = "";
+            const res = await fetch("/api/qr/", {cache: "no-store"});
+            if (!res.ok) throw new Error(`QR API ${res.status}`);
+            const data = await res.json();
+            qrImage.src = `/api/qr/image/?token=${encodeURIComponent(data.token)}&v=${Date.now()}`;
+            startCountdown(data.expires_at);
+            if (refreshTimer) clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(refreshQR, Math.max(1000, data.expires_in * 1000 + 250));
+        } catch (error) {
+            errorDiv.textContent = "QR gagal dimuat. Mencoba kembali…";
+            if (refreshTimer) clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(refreshQR, 5000);
+        }
     }
+
+    qrImage.addEventListener("error", () => {
+        errorDiv.textContent = "Gambar QR gagal dimuat. Mencoba kembali…";
+        if (refreshTimer) clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(refreshQR, 3000);
+    });
 
     refreshQR();
 </script>
-
 </body>
 </html>

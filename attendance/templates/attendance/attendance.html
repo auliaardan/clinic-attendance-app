@@ -4,563 +4,94 @@
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>Absensi Klinik</title>
-
-    <!-- Bootstrap 5 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-
     <style>
-        body {
-            background: #f4f6f9;
-        }
-
-        .btn-in {
-            background: #0d6efd;
-            border-color: #0d6efd;
-            color: #fff;
-        }
-
-        .btn-out {
-            background: #dc3545;
-            border-color: #dc3545;
-            color: #fff;
-        }
-
-        .app-container {
-            max-width: 480px;
-            margin: auto;
-            padding: 12px;
-        }
-
-        .card {
-            border-radius: 16px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
-        }
-
-        #reader {
-            width: 100%;
-            border-radius: 12px;
-            overflow: hidden;
-        }
-
-        .action-btn.active {
-            background: #0d6efd;
-            color: white;
-        }
-
-        .status-small {
-            font-size: 13px;
-            color: #666;
-        }
-
-        #result {
-            margin-top: 10px;
-            font-weight: 500;
-        }
+        body{background:#f4f6f9}.app-container{max-width:480px;margin:auto;padding:12px}.card{border-radius:16px;box-shadow:0 4px 12px rgba(0,0,0,.06)}
+        #qrVideo,#selfiePreview{width:100%;max-height:420px;object-fit:cover;border-radius:12px;background:#111}.status-small{font-size:13px;color:#666}#result{margin-top:10px;font-weight:500}
+        .btn-in{background:#0d6efd;border-color:#0d6efd;color:#fff}.btn-out{background:#dc3545;border-color:#dc3545;color:#fff}
     </style>
 </head>
-
 <body>
 <div class="app-container">
+    <div class="text-center mb-3"><h3 class="fw-bold mb-0">Absensi Klinik</h3><div class="text-muted small">Scan QR • Selfie • PIN</div></div>
 
-    <!-- HEADER -->
-    <div class="text-center mb-3">
-        <h3 class="fw-bold mb-0">Absensi Klinik</h3>
-        <div class="text-muted small">Scan QR • Selfie • PIN</div>
-    </div>
-
-    <!-- STATUS + SINGLE ACTION -->
     <div class="card p-3 mb-3">
-        <div class="d-flex align-items-center justify-content-between">
-            <div>
-                <div class="small text-muted mb-1">Status Staff</div>
-                <div class="fw-semibold" id="staffStatusText">Pilih staff…</div>
-                <div class="status-small" id="staffStatusSince"></div>
-            </div>
-            <span class="badge text-bg-secondary" id="staffStatusBadge">-</span>
-        </div>
-
-        <button class="btn w-100 mt-3" id="actionBtn" type="button" onclick="submitClock()" disabled>
-            Pilih staff dulu
-        </button>
-
+        <div class="d-flex align-items-center justify-content-between"><div><div class="small text-muted mb-1">Status Staff</div><div class="fw-semibold" id="staffStatusText">Pilih staff…</div><div class="status-small" id="staffStatusSince"></div></div><span class="badge text-bg-secondary" id="staffStatusBadge">-</span></div>
         <div class="status-small mt-2" id="actionLabel">Next action: -</div>
     </div>
 
-
-    <!-- QR CARD -->
     <div class="card p-3 mb-3">
         <h6 class="fw-bold mb-2">1) Scan QR</h6>
-        <div id="reader" class="mb-2"></div>
-
-        <div class="status-small">QR token: <span id="qrToken">-</span></div>
-        <div class="status-small">Status: <span id="qrStatus">Not scanned</span></div>
+        <video id="qrVideo" autoplay playsinline muted></video>
+        <canvas id="qrCanvas" class="d-none"></canvas>
+        <div class="status-small mt-2">Status: <span id="qrStatus">Menunggu kamera…</span></div>
         <div class="status-small">Expires: <span id="qrCountdown">-</span></div>
-
-        <button class="btn btn-sm btn-secondary mt-2" type="button" onclick="forceRescan()">
-            Rescan QR
-        </button>
+        <button class="btn btn-sm btn-secondary mt-2" type="button" id="rescanBtn">Rescan QR</button>
     </div>
 
-    <!-- FORM CARD -->
     <div class="card p-3 mb-3">
         <h6 class="fw-bold mb-3">2) Isi Data</h6>
+        <div class="mb-2"><label class="form-label">Mode</label><select id="mode" class="form-select"><option value="normal">Normal</option><option value="proxy">Clock untuk orang lain (Proxy)</option></select></div>
+        <div class="mb-2"><label class="form-label">Nama Staff</label><select id="subject_employee_id" class="form-select">{% for e in employees %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}</select></div>
+        <div class="mb-3"><label class="form-label">PIN Staff</label><input id="subject_pin" class="form-control" type="password" inputmode="numeric" placeholder="PIN"/></div>
 
-        <div class="mb-2">
-            <label class="form-label">Mode</label>
-            <select id="mode" class="form-select" onchange="toggleProxy()">
-                <option value="normal">Normal</option>
-                <option value="proxy">Clock untuk orang lain (Proxy)</option>
-            </select>
-        </div>
-
-        <div class="mb-2">
-            <label class="form-label">Nama Staff</label>
-            <select id="subject_employee_id" class="form-select" onchange="refreshStatus()">
-                {% for e in employees %}
-                    <option value="{{ e.id }}">{{ e.name }}</option>
-                {% endfor %}
-            </select>
-        </div>
-
-        <div class="mb-3">
-            <label class="form-label">PIN Staff</label>
-            <input id="subject_pin" class="form-control" type="password" inputmode="numeric" placeholder="PIN"/>
-        </div>
-
-        <div id="proxyBox" style="display:none;">
-            <div class="mb-2">
-                <label class="form-label">Saksi</label>
-                <select id="witness_employee_id" class="form-select">
-                    {% for e in employees %}
-                        <option value="{{ e.id }}">{{ e.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-
-            <div class="mb-3">
-                <label class="form-label">PIN Saksi</label>
-                <input id="witness_pin" class="form-control" type="password" inputmode="numeric"
-                       placeholder="PIN saksi"/>
-            </div>
+        <div id="proxyBox" class="d-none">
+            <div class="mb-2"><label class="form-label">Saksi</label><select id="witness_employee_id" class="form-select">{% for e in employees %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}</select></div>
+            <div class="mb-3"><label class="form-label">PIN Saksi</label><input id="witness_pin" class="form-control" type="password" inputmode="numeric" placeholder="PIN saksi"/></div>
         </div>
 
         <div class="mb-3">
             <label class="form-label">Selfie</label>
-            <video id="cameraPreview" class="w-100 rounded border" autoplay playsinline muted></video>
-            <canvas id="captureCanvas" class="d-none"></canvas>
-            <div id="cameraFallback" class="mt-2 d-none"><div class="alert alert-warning py-2">Fallback kompatibilitas: kamera langsung tidak tersedia. Upload foto tetap divalidasi server.</div><input id="photo" class="form-control" type="file" accept="image/*" capture="user"/></div>
-            <div class="d-flex gap-2 mt-2"><button class="btn btn-primary" type="button" id="captureBtn" onclick="captureSelfie()">Capture</button><button class="btn btn-outline-secondary" type="button" id="retakeBtn" onclick="retakeSelfie()" disabled>Retake</button></div>
+            <div class="alert alert-info py-2 small">Scan QR terlebih dahulu. Setelah QR valid, tekan tombol kamera di bawah. Kamera QR akan dihentikan sebelum kamera selfie dibuka.</div>
+            <input id="photo" class="form-control" type="file" accept="image/*" capture="user" disabled/>
+            <img id="selfiePreview" class="d-none mt-2" alt="Preview selfie"/>
+            <button id="retakeBtn" class="btn btn-outline-secondary btn-sm mt-2 d-none" type="button">Ambil Ulang</button>
         </div>
 
-        <button id="submitBtn" class="btn btn-success w-100" type="button" onclick="submitClock()">
-            Submit Absensi
-        </button>
-
+        <button id="submitBtn" class="btn btn-success w-100" type="button" disabled>Submit Absensi</button>
         <div id="result" class="text-center"></div>
     </div>
-
 </div>
 
-<script src="https://unpkg.com/html5-qrcode"></script>
-
 <script>
-    // ======= State =======
-    let currentAction = "IN";
-    let scannedToken = "";
-    let countdownTimer = null;
-    let expiresIn = 0;
-    let cameraStream = null;
-    let capturedBlob = null;
+    let currentAction="IN", scannedToken="", expiresIn=0, countdownTimer=null;
+    let qrStream=null, scanFrame=null, detector=null, selfieFile=null;
+    const qrVideo=document.getElementById("qrVideo"), qrCanvas=document.getElementById("qrCanvas");
+    const qrStatus=document.getElementById("qrStatus"), qrCountdown=document.getElementById("qrCountdown");
+    const photoInput=document.getElementById("photo"), preview=document.getElementById("selfiePreview");
+    const submitBtn=document.getElementById("submitBtn"), result=document.getElementById("result");
 
-    const html5QrCode = new Html5Qrcode("reader");
-    let scanning = false;
+    function setResult(message){result.textContent=message||""}
+    function setAction(action){currentAction=action;document.getElementById("actionLabel").textContent=`Next action: ${action}`;submitBtn.classList.toggle("btn-danger",action==="OUT");submitBtn.classList.toggle("btn-success",action!=="OUT")}
+    function updateSubmitState(){submitBtn.disabled=!(scannedToken&&selfieFile&&document.getElementById("subject_pin").value)}
+    function stopCountdown(){if(countdownTimer)clearInterval(countdownTimer);countdownTimer=null}
+    function startCountdown(seconds){stopCountdown();expiresIn=Number(seconds||0);qrCountdown.textContent=`${expiresIn}s`;countdownTimer=setInterval(()=>{expiresIn=Math.max(0,expiresIn-1);qrCountdown.textContent=`${expiresIn}s`;if(!expiresIn){scannedToken="";photoInput.disabled=true;updateSubmitState();stopCountdown();qrStatus.textContent="QR kedaluwarsa — scan ulang";startQrScanner()}},1000)}
 
-    window.addEventListener("load", () => {
-        startScanning();
-        refreshStatus();
-        startSelfieCamera();
-    });
+    async function stopQrScanner(){if(scanFrame)cancelAnimationFrame(scanFrame);scanFrame=null;if(qrStream){qrStream.getTracks().forEach(track=>track.stop());qrStream=null}qrVideo.srcObject=null}
 
-    // ======= UI helpers =======
-    function setAction(a) {
-        currentAction = a;
+    async function validateToken(token){const response=await fetch(`/api/qr/check/?token=${encodeURIComponent(token)}`,{cache:"no-store"});if(!response.ok)throw new Error("QR check failed");return response.json()}
 
-        const actionBtn = document.getElementById("actionBtn");
-        const actionLabel = document.getElementById("actionLabel");
+    async function acceptToken(token){await stopQrScanner();qrStatus.textContent="Memeriksa QR…";try{const check=await validateToken(token);if(!check.valid)throw new Error("invalid");scannedToken=token;qrStatus.textContent="QR valid — ambil selfie";photoInput.disabled=false;startCountdown(check.expires_in);updateSubmitState()}catch(error){scannedToken="";photoInput.disabled=true;qrStatus.textContent="QR tidak valid — scan ulang";startQrScanner()}}
 
-        if (a === "IN") {
-            actionBtn.classList.remove("btn-out");
-            actionBtn.classList.add("btn-in");
-            actionBtn.textContent = "Clock In";
-            actionLabel.textContent = "Next action: IN";
-        } else {
-            actionBtn.classList.remove("btn-in");
-            actionBtn.classList.add("btn-out");
-            actionBtn.textContent = "Clock Out";
-            actionLabel.textContent = "Next action: OUT";
-        }
-    }
+    async function scanLoop(){if(!qrStream||!detector)return;try{const codes=await detector.detect(qrVideo);if(codes.length&&codes[0].rawValue){await acceptToken(codes[0].rawValue.trim());return}}catch(error){}scanFrame=requestAnimationFrame(scanLoop)}
 
+    async function startQrScanner(){await stopQrScanner();scannedToken="";photoInput.disabled=true;updateSubmitState();if(!window.isSecureContext){qrStatus.textContent="Kamera memerlukan HTTPS";return}if(!("BarcodeDetector" in window)){qrStatus.textContent="Browser tidak mendukung scanner QR. Gunakan Chrome Android terbaru.";return}try{detector=new BarcodeDetector({formats:["qr_code"]});qrStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}},audio:false});qrVideo.srcObject=qrStream;await qrVideo.play();qrStatus.textContent="Arahkan kamera ke QR";scanLoop()}catch(error){qrStatus.textContent="Kamera QR gagal. Izinkan kamera lalu tekan Rescan."}}
 
-    function toggleProxy() {
-        const isProxy = document.getElementById("mode").value === "proxy";
-        document.getElementById("proxyBox").style.display = isProxy ? "block" : "none";
-    }
+    async function isMostlyBlack(file){const bitmap=await createImageBitmap(file);const canvas=document.createElement("canvas");const max=96,scale=Math.min(1,max/Math.max(bitmap.width,bitmap.height));canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));const ctx=canvas.getContext("2d");ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();const data=ctx.getImageData(0,0,canvas.width,canvas.height).data;let total=0;for(let i=0;i<data.length;i+=4)total+=(data[i]+data[i+1]+data[i+2])/3;return total/(data.length/4)<12}
 
-    function setQRUI(status, secondsLeft) {
-        document.getElementById("qrStatus").textContent = status;
-        document.getElementById("qrCountdown").textContent =
-            (secondsLeft != null) ? (secondsLeft + "s") : "-";
-    }
+    photoInput.addEventListener("change",async()=>{const file=photoInput.files[0];selfieFile=null;preview.classList.add("d-none");if(!file){updateSubmitState();return}try{if(await isMostlyBlack(file)){photoInput.value="";setResult("❌ Foto terlihat hitam/kosong. Ambil ulang dengan pencahayaan yang cukup.");updateSubmitState();return}selfieFile=file;preview.src=URL.createObjectURL(file);preview.classList.remove("d-none");document.getElementById("retakeBtn").classList.remove("d-none");setResult("✅ Selfie siap dikirim.");updateSubmitState()}catch(error){photoInput.value="";setResult("❌ Foto tidak dapat dibaca. Ambil ulang.")}})
+    document.getElementById("retakeBtn").addEventListener("click",()=>{photoInput.value="";selfieFile=null;preview.removeAttribute("src");preview.classList.add("d-none");document.getElementById("retakeBtn").classList.add("d-none");setResult("");updateSubmitState();photoInput.click()})
+    document.getElementById("rescanBtn").addEventListener("click",()=>{stopCountdown();startQrScanner()})
+    document.getElementById("mode").addEventListener("change",event=>document.getElementById("proxyBox").classList.toggle("d-none",event.target.value!=="proxy"))
+    document.getElementById("subject_pin").addEventListener("input",updateSubmitState)
+    document.getElementById("subject_employee_id").addEventListener("change",refreshStatus)
 
-    function setResult(msg) {
-        document.getElementById("result").textContent = msg || "";
-    }
+    async function refreshStatus(){const id=document.getElementById("subject_employee_id").value;try{const response=await fetch(`/api/employee/status/?employee_id=${encodeURIComponent(id)}`,{cache:"no-store"});const data=await response.json();if(!data.ok)throw new Error();document.getElementById("staffStatusText").textContent=`${data.employee_name} • ${data.current_state==="IN"?"Sudah Clock In":"Belum Clock In"}`;document.getElementById("staffStatusBadge").textContent=data.current_state==="IN"?"SEDANG BEKERJA":"BELUM CLOCK IN";document.getElementById("staffStatusBadge").className=`badge ${data.current_state==="IN"?"text-bg-success":"text-bg-secondary"}`;document.getElementById("staffStatusSince").textContent=data.since?`Sejak: ${new Date(data.since).toLocaleString()}`:"";setAction(data.next_action)}catch(error){document.getElementById("staffStatusText").textContent="Gagal mengambil status"}}
 
-    // ======= Countdown (server-synced seconds) =======
-    function stopCountdown() {
-        if (countdownTimer) clearInterval(countdownTimer);
-        countdownTimer = null;
-    }
+    submitBtn.addEventListener("click",async()=>{const isProxy=document.getElementById("mode").value==="proxy";const subjectPin=document.getElementById("subject_pin").value;if(!scannedToken)return setResult("❌ Scan QR dulu.");if(!subjectPin)return setResult("❌ PIN staff wajib.");if(!selfieFile)return setResult("❌ Ambil selfie dulu.");if(isProxy&&!document.getElementById("witness_pin").value)return setResult("❌ PIN saksi wajib.");submitBtn.disabled=true;const form=new FormData();form.append("action",currentAction);form.append("qr_token",scannedToken);form.append("subject_employee_id",document.getElementById("subject_employee_id").value);form.append("subject_pin",subjectPin);form.append("photo",selfieFile,"selfie.jpg");form.append("is_proxy",isProxy?"1":"0");if(isProxy){form.append("witness_employee_id",document.getElementById("witness_employee_id").value);form.append("witness_pin",document.getElementById("witness_pin").value)}try{const response=await fetch("/api/clock/",{method:"POST",body:form});const data=await response.json();if(!data.ok)throw new Error(data.error||"Error");setResult(`✅ ${data.message}`);photoInput.value="";selfieFile=null;preview.classList.add("d-none");document.getElementById("subject_pin").value="";scannedToken="";stopCountdown();await refreshStatus();await startQrScanner()}catch(error){setResult(`❌ ${error.message}`);updateSubmitState()}})
 
-    function startCountdown(secondsLeft) {
-        stopCountdown();
-        expiresIn = Number(secondsLeft || 0);
-
-        setQRUI("Valid (server)", expiresIn);
-
-        countdownTimer = setInterval(() => {
-            expiresIn = Math.max(0, expiresIn - 1);
-            setQRUI(expiresIn > 0 ? "Valid (server)" : "Expired — rescan", expiresIn);
-
-            if (expiresIn <= 0) {
-                scannedToken = "";
-                stopCountdown();
-                // resume scanning automatically when expired
-                startScanning();
-            }
-        }, 1000);
-    }
-
-    // ======= QR validation (asks server) =======
-    async function validateScannedToken(token) {
-        const res = await fetch(`/api/qr/check/?token=${encodeURIComponent(token)}`);
-        return await res.json(); // { valid, expires_in, ... }
-    }
-
-    // ======= Scanner control =======
-    async function startScanning() {
-        if (scanning) return;
-
-        // If we already have a valid token, don't scan again
-        if (scannedToken) return;
-
-        scanning = true;
-        try {
-            const config = {fps: 10, qrbox: 250};
-            await html5QrCode.start(
-                {facingMode: "environment"},
-                config,
-                async (decodedText) => {
-                    // Pause scanning immediately to prevent repeated rescans
-                    await stopScanning();
-                    await handleScan(decodedText);
-                }
-            );
-        } catch (e) {
-            scanning = false;
-            setQRUI("Camera error — allow permission & reload", null);
-        }
-    }
-
-    async function stopScanning() {
-        if (!scanning) return;
-        scanning = false;
-        try {
-            await html5QrCode.stop();
-            await html5QrCode.clear();
-        } catch (e) {
-            // ignore stop/clear errors
-        }
-    }
-
-    // ======= Scan handler (single-shot) =======
-    async function handleScan(decodedText) {
-        const token = (decodedText || "").trim();
-        if (!token) {
-            setQRUI("Scan failed — try again", null);
-            startScanning();
-            return;
-        }
-
-        // Show token + checking
-        scannedToken = token;
-        document.getElementById("qrToken").textContent = token.slice(0, 20) + "...";
-        setQRUI("Checking…", null);
-
-        try {
-            const check = await validateScannedToken(token);
-
-            if (!check.valid) {
-                scannedToken = "";
-                stopCountdown();
-                setQRUI("Expired/invalid — scan again", 0);
-                startScanning();
-                return;
-            }
-
-            // Valid token — start synchronized countdown
-            startCountdown(check.expires_in);
-
-            // Do NOT resume scanning while token is valid.
-            // Rescan happens via button or when token expires.
-        } catch (e) {
-            scannedToken = "";
-            stopCountdown();
-            setQRUI("Network error — try scan again", null);
-            startScanning();
-        }
-    }
-
-    // ======= Rescan button =======
-    async function forceRescan() {
-        scannedToken = "";
-        stopCountdown();
-        document.getElementById("qrToken").textContent = "-";
-        setQRUI("Not scanned", null);
-        setResult("");
-        await startScanning();
-    }
-
-    async function startSelfieCamera() {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            document.getElementById("cameraFallback").classList.remove("d-none");
-            return;
-        }
-        try {
-            cameraStream = await navigator.mediaDevices.getUserMedia({video: {facingMode: "user"}, audio: false});
-            document.getElementById("cameraPreview").srcObject = cameraStream;
-        } catch (e) {
-            document.getElementById("cameraFallback").classList.remove("d-none");
-        }
-    }
-    function stopSelfieCamera() {
-        if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
-        cameraStream = null;
-    }
-    async function captureSelfie() {
-        const video = document.getElementById("cameraPreview");
-        const canvas = document.getElementById("captureCanvas");
-        if (!video.videoWidth) { setResult("❌ Kamera belum siap."); return; }
-        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-        canvas.getContext("2d").drawImage(video, 0, 0);
-        capturedBlob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.75));
-        document.getElementById("captureBtn").disabled = true;
-        document.getElementById("retakeBtn").disabled = false;
-        setResult("✅ Selfie siap dikirim.");
-    }
-    function retakeSelfie() {
-        capturedBlob = null;
-        document.getElementById("captureBtn").disabled = false;
-        document.getElementById("retakeBtn").disabled = true;
-        setResult("");
-    }
-    window.addEventListener("beforeunload", stopSelfieCamera);
-
-    async function resizeImage(file, maxSide = 1024, quality = 0.75) {
-        const img = new Image();
-        const url = URL.createObjectURL(file);
-
-        try {
-            await new Promise((resolve, reject) => {
-                img.onload = resolve;
-                img.onerror = reject;
-                img.src = url;
-            });
-
-            let {width, height} = img;
-            const longest = Math.max(width, height);
-            if (longest > maxSide) {
-                const scale = maxSide / longest;
-                width = Math.round(width * scale);
-                height = Math.round(height * scale);
-            }
-
-            const canvas = document.createElement("canvas");
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext("2d");
-            ctx.drawImage(img, 0, 0, width, height);
-
-            const blob = await new Promise((resolve) =>
-                canvas.toBlob(resolve, "image/jpeg", quality)
-            );
-            return blob;
-        } finally {
-            URL.revokeObjectURL(url);
-        }
-    }
-
-    // ======= Submit =======
-    async function submitClock() {
-        const mode = document.getElementById("mode").value;
-        const isProxy = mode === "proxy";
-
-        const subjectId = document.getElementById("subject_employee_id").value;
-        const subjectPin = document.getElementById("subject_pin").value;
-
-        const witnessId = document.getElementById("witness_employee_id").value;
-        const witnessPin = document.getElementById("witness_pin").value;
-
-        const fallbackInput = document.getElementById("photo");
-        const photoFile = fallbackInput ? fallbackInput.files[0] : null;
-        const submitBtn = document.getElementById("submitBtn");
-
-        if (!scannedToken) {
-            setResult("❌ Scan QR dulu.");
-            return;
-        }
-        if (!subjectPin) {
-            setResult("❌ PIN staff wajib.");
-            return;
-        }
-        if (!capturedBlob && !photoFile) {
-            setResult("❌ Capture selfie dulu.");
-            return;
-        }
-        if (isProxy && !witnessPin) {
-            setResult("❌ PIN saksi wajib (proxy).");
-            return;
-        }
-
-        submitBtn.disabled = true;
-        const resizedBlob = capturedBlob || await resizeImage(photoFile, 1024, 0.75);
-
-        const form = new FormData();
-        form.append("action", currentAction);
-        form.append("qr_token", scannedToken);
-        form.append("subject_employee_id", subjectId);
-        form.append("subject_pin", subjectPin);
-        form.append("photo", resizedBlob, "selfie.jpg");
-        form.append("is_proxy", isProxy ? "1" : "0");
-
-        if (isProxy) {
-            form.append("witness_employee_id", witnessId);
-            form.append("witness_pin", witnessPin);
-        }
-
-        try {
-            const resp = await fetch("/api/clock/", {method: "POST", body: form});
-            const data = await resp.json();
-
-            if (data.ok) {
-                setResult("✅ " + data.message + " @ " + data.time);
-                // Reset for next user
-                scannedToken = "";
-                stopCountdown();
-                document.getElementById("qrToken").textContent = "-";
-                setQRUI("Not scanned", null);
-                if (document.getElementById("photo")) document.getElementById("photo").value = "";
-                retakeSelfie();
-                stopSelfieCamera();
-                startScanning();
-                await refreshStatus();
-
-            } else {
-                setResult("❌ " + (data.error || "Error"));
-                // If QR expired at submit time, force rescan
-                if ((data.error || "").toLowerCase().includes("qr")) {
-                    scannedToken = "";
-                    stopCountdown();
-                    setQRUI("Expired/invalid — scan again", 0);
-                    startScanning();
-                }
-            }
-        } catch (e) {
-            setResult("❌ Network error");
-        } finally {
-            submitBtn.disabled = false;
-        }
-    }
-
-    // ======= Start scanning on load =======
-    // Note: some browsers require user gesture; if so, press Rescan.
-    window.addEventListener("load", () => {
-        startScanning();
-    });
-
-    function setStaffStatusUI({employeeName, currentState, sinceISO}) {
-        const badge = document.getElementById("staffStatusBadge");
-        const text = document.getElementById("staffStatusText");
-        const since = document.getElementById("staffStatusSince");
-
-        if (!employeeName) {
-            badge.className = "badge text-bg-secondary";
-            badge.textContent = "-";
-            text.textContent = "Pilih staff…";
-            since.textContent = "";
-            return;
-        }
-
-        if (currentState === "IN") {
-            badge.className = "badge text-bg-success";
-            badge.textContent = "SEDANG BEKERJA";
-            text.textContent = `${employeeName} • Sudah Clock In`;
-        } else {
-            badge.className = "badge text-bg-secondary";
-            badge.textContent = "BELUM CLOCK IN";
-            text.textContent = `${employeeName} • Belum Clock In`;
-        }
-
-        if (sinceISO) {
-            const dt = new Date(sinceISO);
-            since.textContent = "Sejak: " + dt.toLocaleString();
-        } else {
-            since.textContent = "";
-        }
-    }
-
-    async function refreshStatus() {
-        const subjectId = document.getElementById("subject_employee_id").value;
-        const actionBtn = document.getElementById("actionBtn");
-
-        if (!subjectId) {
-            actionBtn.disabled = true;
-            actionBtn.textContent = "Pilih staff dulu";
-            setStaffStatusUI({employeeName: null});
-            return;
-        }
-
-        try {
-            const res = await fetch(`/api/employee/status/?employee_id=${encodeURIComponent(subjectId)}`);
-            const data = await res.json();
-
-            if (!data.ok) {
-                actionBtn.disabled = true;
-                setStaffStatusUI({employeeName: null});
-                setResult("❌ " + (data.error || "Gagal ambil status staff"));
-                return;
-            }
-
-            // current_state: IN/OUT, next_action: IN/OUT
-            setStaffStatusUI({
-                employeeName: data.employee_name,
-                currentState: data.current_state,
-                sinceISO: data.since,
-            });
-
-            setAction(data.next_action);
-            actionBtn.disabled = false;
-        } catch (e) {
-            actionBtn.disabled = true;
-            setStaffStatusUI({employeeName: null});
-            setResult("❌ Network error (status staff)");
-        }
-    }
-
+    window.addEventListener("load",()=>{refreshStatus();startQrScanner()});
+    window.addEventListener("beforeunload",()=>{stopCountdown();stopQrScanner()});
 </script>
-
-
 </body>
 </html>

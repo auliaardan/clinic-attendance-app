@@ -1,12 +1,13 @@
 from django.urls import path
 
-from . import views
+from . import qr_views, views
 
 urlpatterns = [
     path("", views.home, name="home"),
     path("attendance/", views.attendance_page, name="attendance_page"),
     path("display/", views.qr_display, name="qr_display"),
     path("api/qr/", views.api_qr, name="api_qr"),
+    path("api/qr/image/", qr_views.qr_image, name="qr_image"),
     path("api/qr/check/", views.api_qr_check, name="api_qr_check"),
     path("api/clock/", views.api_clock, name="api_clock"),
     path("manager/", views.manager_dashboard, name="manager_dashboard"),
@@ -26,5 +27,4 @@ urlpatterns = [
     path("employee/leave/new/", views.employee_leave_new, name="employee_leave_new"),
     path("employee/corrections/new/", views.employee_correction_new, name="employee_correction_new"),
     path("employee/corrections/<int:pk>/cancel/", views.employee_correction_cancel, name="employee_correction_cancel"),
-
 ]
