@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <title>Clinic QR</title>
+    <title>QR Absensi</title>
     <style>
         body { font-family: sans-serif; text-align: center; margin: 0; padding: 24px; background: #fff; }
         .wrap { display: grid; place-items: center; min-height: calc(100vh - 48px); }
@@ -15,9 +15,9 @@
 <body>
 <div class="wrap">
     <div>
-        <h1>SCAN THIS QR</h1>
-        <img id="qrImage" alt="Attendance QR"/>
-        <div class="hint">Updates every 60 seconds</div>
+        <h1>SCAN QR ABSENSI</h1>
+        <img id="qrImage" alt="QR Absensi"/>
+        <div class="hint">Diperbarui setiap 60 detik</div>
         <div id="ts" class="hint"></div>
         <div id="error" class="error"></div>
     </div>
@@ -34,7 +34,7 @@
         const render = () => {
             const now = Math.floor(Date.now() / 1000);
             const left = Math.max(0, expiresAtEpoch - now);
-            tsDiv.textContent = `Server-synced: expires in ${left}s`;
+            tsDiv.textContent = `Berlaku ${left} detik lagi`;
         };
         render();
         countdownTimer = setInterval(render, 250);
