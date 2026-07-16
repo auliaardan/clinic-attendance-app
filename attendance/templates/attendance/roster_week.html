@@ -143,7 +143,7 @@
             </div>
         {% endif %}
 
-        {% if is_locked %}<div class="pill warn">This submitted/approved week is locked/read-only.</div>{% endif %}
+        {% if division.schedule_mode == "FIXED" %}<div class="pill warn">Fixed-hours division: shifts are generated from fixed schedule rules; use calendar exceptions for holidays/special days.</div>{% endif %}{% if is_locked %}<div class="pill warn">This submitted/approved week is locked/read-only.</div>{% endif %}
         <form method="post">
             {% csrf_token %}
             <div class="row" style="margin-bottom:10px;">

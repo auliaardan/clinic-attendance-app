@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Clinic Attendance fixed shift generation daily
+
+[Timer]
+OnCalendar=*-*-* 00:10:00
+Persistent=true
+Unit=clinic-attendance-fixed-shifts.service
+
+[Install]
+WantedBy=timers.target

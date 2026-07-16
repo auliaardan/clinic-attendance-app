@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Clinic Attendance alert checks every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=clinic-attendance-alerts.service
+
+[Install]
+WantedBy=timers.target

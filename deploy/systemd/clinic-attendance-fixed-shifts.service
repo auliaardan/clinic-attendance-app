@@ -1,0 +1,12 @@
+[Unit]
+Description=Clinic Attendance fixed shift generation
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=clinic-attendance
+Group=clinic-attendance
+WorkingDirectory=/srv/webapps/clinic-attendance-app
+EnvironmentFile=/srv/webapps/clinic-attendance-app/.env
+ExecStart=/usr/bin/flock -n /tmp/clinic-attendance-fixed-shifts.lock /srv/webapps/clinic-attendance-app/.venv/bin/python /srv/webapps/clinic-attendance-app/manage.py generate_fixed_shifts --confirm --days 45

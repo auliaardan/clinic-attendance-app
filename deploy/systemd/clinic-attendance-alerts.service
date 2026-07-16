@@ -1,0 +1,12 @@
+[Unit]
+Description=Clinic Attendance operational Telegram alerts
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=clinic-attendance
+Group=clinic-attendance
+WorkingDirectory=/srv/webapps/clinic-attendance-app
+EnvironmentFile=/srv/webapps/clinic-attendance-app/.env
+ExecStart=/usr/bin/flock -n /tmp/clinic-attendance-alerts.lock /srv/webapps/clinic-attendance-app/.venv/bin/python /srv/webapps/clinic-attendance-app/manage.py send_attendance_alerts --send --retry-failed

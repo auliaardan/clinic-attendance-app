@@ -68,3 +68,16 @@ class AttendanceCorrectionRequestForm(forms.ModelForm):
         obj=super().save(commit=False); obj.employee=self.employee; obj.status="SUBMITTED"
         if commit: obj.save()
         return obj
+
+from .models import FixedScheduleRule, ScheduleException, Division
+class FixedScheduleRuleForm(forms.ModelForm):
+    class Meta:
+        model = FixedScheduleRule
+        fields = ["is_workday", "start_time", "end_time"]
+        widgets = {"start_time": forms.TimeInput(attrs={"type":"time"}), "end_time": forms.TimeInput(attrs={"type":"time"})}
+
+class ScheduleExceptionForm(forms.ModelForm):
+    class Meta:
+        model = ScheduleException
+        fields = ["division", "date", "is_workday", "start_time", "end_time", "note"]
+        widgets = {"date": forms.DateInput(attrs={"type":"date"}), "start_time": forms.TimeInput(attrs={"type":"time"}), "end_time": forms.TimeInput(attrs={"type":"time"})}

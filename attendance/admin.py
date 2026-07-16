@@ -3,15 +3,15 @@ from django.contrib import admin
 from .forms import EmployeeAdminForm
 from .models import (
     Division, EmployeeProfile, DivisionRosterEditor,
-    ShiftTemplate, ShiftAssignment, LeaveRequest
+    ShiftTemplate, ShiftAssignment, LeaveRequest, FixedScheduleRule, ScheduleException, NotificationDelivery
 )
 from .models import Employee, AttendanceSession, AttendanceEvent
 
 
 @admin.register(Division)
 class DivisionAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "is_active")
-    list_filter = ("is_active",)
+    list_display = ("id", "name", "is_active", "schedule_mode")
+    list_filter = ("is_active", "schedule_mode")
     search_fields = ("name",)
 
 
@@ -38,8 +38,8 @@ class ShiftTemplateAdmin(admin.ModelAdmin):
 
 @admin.register(ShiftAssignment)
 class ShiftAssignmentAdmin(admin.ModelAdmin):
-    list_display = ("date", "division", "employee", "start_time", "end_time", "status", "entered_by", "approved_by")
-    list_filter = ("division", "status", "date")
+    list_display = ("date", "division", "employee", "start_time", "end_time", "status", "source", "entered_by", "approved_by")
+    list_filter = ("division", "status", "source", "date")
     search_fields = ("employee__name", "division__name")
 
 
@@ -80,3 +80,8 @@ class AttendanceEventAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+admin.site.register(FixedScheduleRule)
+admin.site.register(ScheduleException)
+admin.site.register(NotificationDelivery)

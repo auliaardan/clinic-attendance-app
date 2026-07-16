@@ -22,7 +22,7 @@
         <li class="nav-item"><a class="nav-link {% if active_nav == 'attendance' %}active fw-semibold{% endif %}" href="{% url 'attendance_page' %}">Mulai Absensi</a></li>
         <li class="nav-item"><a class="nav-link {% if active_nav == 'employee' %}active fw-semibold{% endif %}" href="{% url nav_employee_url_name %}">Portal Staff</a></li>
         <li class="nav-item"><a class="nav-link {% if active_nav == 'manager' %}active fw-semibold{% endif %}" href="{% url 'manager_dashboard' %}">Portal Manager</a></li>
-        {% if nav_can_access_roster %}<li class="nav-item"><a class="nav-link {% if active_nav == 'roster' %}active fw-semibold{% endif %}" href="{% url 'roster_week' %}">Roster</a></li>{% endif %}
+        {% if nav_can_access_roster %}<li class="nav-item"><a class="nav-link {% if active_nav == 'roster' %}active fw-semibold{% endif %}" href="{% url 'roster_week' %}">Roster</a></li>{% endif %}{% if request.user.is_staff %}<li class="nav-item"><a class="nav-link {% if active_nav == 'schedules' %}active fw-semibold{% endif %}" href="{% url 'manager_schedules' %}">Pengaturan Jadwal</a></li><li class="nav-item"><a class="nav-link {% if active_nav == 'alerts' %}active fw-semibold{% endif %}" href="{% url 'manager_alerts' %}">Notifikasi</a></li>{% endif %}
       </ul>
       <div class="d-flex align-items-lg-center nav-actions flex-column flex-lg-row">
         {% if nav_employee %}

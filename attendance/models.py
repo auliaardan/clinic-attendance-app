@@ -74,8 +74,10 @@ class AttendanceEvent(models.Model):
 
 
 class Division(models.Model):
+    SCHEDULE_MODES = (("ROSTER", "Roster-based"), ("FIXED", "Fixed hours"))
     name = models.CharField(max_length=120, unique=True)
     is_active = models.BooleanField(default=True)
+    schedule_mode = models.CharField(max_length=12, choices=SCHEDULE_MODES, default="ROSTER")
 
     def __str__(self):
         return self.name
@@ -119,6 +121,7 @@ class ShiftTemplate(models.Model):
 
 
 class ShiftAssignment(models.Model):
+    SOURCE_CHOICES = (("MANUAL", "Manual roster"), ("FIXED", "Fixed schedule"))
     STATUS = (
         ("DRAFT", "Draft"),
         ("SUBMITTED", "Submitted"),
@@ -135,6 +138,8 @@ class ShiftAssignment(models.Model):
     end_time = models.TimeField()
 
     status = models.CharField(max_length=12, choices=STATUS, default="DRAFT")
+    source = models.CharField(max_length=12, choices=SOURCE_CHOICES, default="MANUAL")
+    fixed_schedule_rule = models.ForeignKey("FixedScheduleRule", null=True, blank=True, on_delete=models.SET_NULL, related_name="generated_shifts")
     entered_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
                                    related_name="shifts_entered")
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
@@ -150,9 +155,70 @@ class ShiftAssignment(models.Model):
             models.Index(fields=["date", "division", "status"]),
             models.Index(fields=["employee", "date"]),
         ]
+        constraints = [models.UniqueConstraint(fields=["employee", "date"], condition=Q(source="FIXED"), name="uniq_fixed_shift_employee_date")]
 
     def __str__(self):
         return f"{self.employee.name} {self.date} {self.start_time}-{self.end_time} ({self.status})"
+
+
+class FixedScheduleRule(models.Model):
+    WEEKDAYS = ((0, "Monday"), (1, "Tuesday"), (2, "Wednesday"), (3, "Thursday"), (4, "Friday"), (5, "Saturday"), (6, "Sunday"))
+    division = models.ForeignKey(Division, on_delete=models.CASCADE, related_name="fixed_schedule_rules")
+    weekday = models.PositiveSmallIntegerField(choices=WEEKDAYS)
+    is_workday = models.BooleanField(default=False)
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["division", "weekday"], name="uniq_fixed_rule_division_weekday")]
+        indexes = [models.Index(fields=["division", "weekday"], name="idx_fixed_rule_div_weekday")]
+
+    def clean(self):
+        if self.is_workday and (self.start_time is None or self.end_time is None):
+            raise ValidationError("Workday rules require start and end times.")
+
+    def __str__(self):
+        return f"{self.division} weekday {self.weekday}"
+
+
+class ScheduleException(models.Model):
+    division = models.ForeignKey(Division, on_delete=models.CASCADE, related_name="schedule_exceptions")
+    date = models.DateField()
+    is_workday = models.BooleanField(default=False)
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    note = models.CharField(max_length=160, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["division", "date"], name="uniq_schedule_exception_division_date")]
+        indexes = [models.Index(fields=["division", "date"], name="idx_sched_exc_div_date")]
+
+    def clean(self):
+        if self.is_workday and ((self.start_time is None) != (self.end_time is None)):
+            raise ValidationError("Working-day exceptions must provide both start and end times, or neither.")
+
+
+class NotificationDelivery(models.Model):
+    EVENT_TYPES = (("NEW_LEAVE_REQUEST", "New leave request"), ("NEW_CORRECTION_REQUEST", "New correction request"), ("NO_SHOW", "No show"), ("MISSING_CLOCKOUT", "Missing clock-out"), ("PROXY_ATTENDANCE", "Proxy attendance"), ("PIN_LOCKOUT", "PIN lockout"), ("DAILY_SUMMARY", "Daily summary"))
+    STATUSES = (("PENDING", "Pending"), ("SENT", "Sent"), ("FAILED", "Failed"))
+    event_type = models.CharField(max_length=40, choices=EVENT_TYPES)
+    dedupe_key = models.CharField(max_length=220, unique=True)
+    employee = models.ForeignKey(Employee, null=True, blank=True, on_delete=models.SET_NULL, related_name="notification_deliveries")
+    division = models.ForeignKey(Division, null=True, blank=True, on_delete=models.SET_NULL, related_name="notification_deliveries")
+    target_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=12, choices=STATUSES, default="PENDING")
+    attempts = models.PositiveIntegerField(default=0)
+    last_error = models.CharField(max_length=500, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "event_type", "target_date"], name="idx_notif_status_event_date"), models.Index(fields=["created_at"], name="idx_notif_created")]
 
 
 class LeaveRequest(models.Model):
