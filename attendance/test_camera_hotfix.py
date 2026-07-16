@@ -1,3 +1,5 @@
+from urllib.parse import parse_qs, urlparse
+
 from django.test import TestCase
 from django.urls import reverse
 
@@ -22,10 +24,22 @@ class CameraAndQrHotfixTests(TestCase):
         self.assertNotContains(response, "qrcodejs")
         self.assertNotContains(response, "qrcode.min.js")
 
-    def test_attendance_uses_sequential_camera_workflow(self):
+    def test_qr_png_encodes_absolute_attendance_url_for_native_phone_camera(self):
+        # The endpoint still returns an image; implementation source must build an
+        # absolute /attendance/?qr=... URL rather than encode the opaque token alone.
+        from attendance import qr_views
+
+        source = open(qr_views.__file__, encoding="utf-8").read()
+        self.assertIn("request.build_absolute_uri", source)
+        self.assertIn("reverse('attendance_page')", source)
+        self.assertIn("urlencode({'qr': token})", source)
+
+    def test_attendance_uses_sequential_camera_and_iphone_url_fallback(self):
         response = self.client.get(reverse("attendance_page"))
         self.assertContains(response, "BarcodeDetector")
         self.assertContains(response, 'capture="user"')
         self.assertContains(response, "stopQrScanner")
+        self.assertContains(response, 'new URLSearchParams(window.location.search).get("qr")')
+        self.assertContains(response, "aplikasi Camera")
         self.assertNotContains(response, "startSelfieCamera")
-        self.assertNotContains(response, "getUserMedia({video: {facingMode: \"user\"}")
+        self.assertNotContains(response, 'getUserMedia({video: {facingMode: "user"')
