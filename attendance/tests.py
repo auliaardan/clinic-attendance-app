@@ -337,3 +337,81 @@ class PhaseFourNavigationPortalUxTests(TestCase):
         self.assertContains(response, "SCAN THIS QR")
         self.assertNotContains(response, "navbar")
         self.assertNotContains(response, "Portal Staff")
+
+from django.core.management import call_command
+from unittest.mock import patch
+from attendance.models import FixedScheduleRule, ScheduleException, NotificationDelivery
+from attendance.services import generate_fixed_shifts, process_alerts, shift_datetimes
+
+class PhaseFiveFixedScheduleTests(TestCase):
+    def setUp(self):
+        self.div = Division.objects.create(name="Office", schedule_mode="FIXED")
+        self.roster_div = Division.objects.create(name="Clinic")
+        self.emp = pin_employee("Fixed Emp")
+        EmployeeProfile.objects.create(employee=self.emp, division=self.div, is_rostered=True)
+        for wd in range(5):
+            FixedScheduleRule.objects.create(division=self.div, weekday=wd, is_workday=True, start_time=time(8), end_time=time(17))
+        FixedScheduleRule.objects.create(division=self.div, weekday=5, is_workday=False)
+
+    def test_defaults_and_generation_idempotent_manual_precedence(self):
+        self.assertEqual(self.roster_div.schedule_mode, "ROSTER")
+        monday = dt_date(2026, 7, 20)
+        counts = generate_fixed_shifts(monday, days=6, confirm=True)
+        self.assertEqual(counts["created"], 5)
+        self.assertEqual(ShiftAssignment.objects.filter(source="FIXED", status="APPROVED").count(), 5)
+        counts = generate_fixed_shifts(monday, days=6, confirm=True)
+        self.assertEqual(counts["created"], 0)
+        tuesday = monday + timedelta(days=1)
+        ShiftAssignment.objects.filter(employee=self.emp, date=tuesday, source="FIXED").delete()
+        ShiftAssignment.objects.create(employee=self.emp, division=self.div, date=tuesday, start_time=time(9), end_time=time(12), status="APPROVED")
+        counts = generate_fixed_shifts(monday, days=2, confirm=True)
+        self.assertGreaterEqual(counts["skipped"], 1)
+        self.assertFalse(ShiftAssignment.objects.filter(employee=self.emp, date=tuesday, source="FIXED").exists())
+
+    def test_exception_and_future_update_not_past_update(self):
+        monday = dt_date(2026, 7, 20)
+        ScheduleException.objects.create(division=self.div, date=monday, is_workday=False, note="Holiday")
+        special = monday + timedelta(days=5)
+        ScheduleException.objects.create(division=self.div, date=special, is_workday=True, start_time=time(10), end_time=time(14))
+        generate_fixed_shifts(monday, days=6, confirm=True)
+        self.assertFalse(ShiftAssignment.objects.filter(date=monday).exists())
+        self.assertTrue(ShiftAssignment.objects.filter(date=special, start_time=time(10), end_time=time(14)).exists())
+
+    def test_overnight_fixed_shift_classification(self):
+        night = Division.objects.create(name="Night", schedule_mode="FIXED")
+        emp = pin_employee("Night Emp"); EmployeeProfile.objects.create(employee=emp, division=night)
+        FixedScheduleRule.objects.create(division=night, weekday=0, is_workday=True, start_time=time(22), end_time=time(6))
+        monday = dt_date(2026, 7, 20)
+        generate_fixed_shifts(monday, days=1, confirm=True)
+        sh = ShiftAssignment.objects.get(employee=emp, date=monday)
+        start, end = shift_datetimes(sh)
+        self.assertEqual((end - start).total_seconds(), 8*3600)
+
+class PhaseFiveAlertTests(TestCase):
+    def setUp(self):
+        self.div = Division.objects.create(name="Alerts")
+        self.emp = pin_employee("Alert Emp")
+        EmployeeProfile.objects.create(employee=self.emp, division=self.div)
+
+    @override_settings(TELEGRAM_ALERTS_ENABLED=True, TELEGRAM_BOT_TOKEN="123:ABC", TELEGRAM_CHAT_IDS="1")
+    @patch("attendance.services.urlrequest.urlopen")
+    def test_dry_run_no_telegram_and_send_dedupes(self, post):
+        today = timezone.localdate()
+        LeaveRequest.objects.create(employee=self.emp, date_from=today, date_to=today, status="SUBMITTED")
+        rows = process_alerts(send=False, event_type="NEW_LEAVE_REQUEST", target_date=today)
+        self.assertTrue(rows); post.assert_not_called()
+        post.return_value.__enter__.return_value.status = 200
+        process_alerts(send=True, event_type="NEW_LEAVE_REQUEST", target_date=today)
+        process_alerts(send=True, event_type="NEW_LEAVE_REQUEST", target_date=today)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(NotificationDelivery.objects.get(event_type="NEW_LEAVE_REQUEST").status, "SENT")
+
+    @override_settings(TELEGRAM_ALERTS_ENABLED=True, TELEGRAM_BOT_TOKEN="123:SECRET", TELEGRAM_CHAT_IDS="1")
+    @patch("attendance.services.urlrequest.urlopen", side_effect=Exception("https://api.telegram.org/bot123:SECRET/sendMessage failed"))
+    def test_telegram_failure_sanitized(self, post):
+        today = timezone.localdate()
+        LeaveRequest.objects.create(employee=self.emp, date_from=today, date_to=today, status="SUBMITTED")
+        process_alerts(send=True, event_type="NEW_LEAVE_REQUEST", target_date=today)
+        rec = NotificationDelivery.objects.get()
+        self.assertEqual(rec.status, "FAILED")
+        self.assertNotIn("SECRET", rec.last_error)

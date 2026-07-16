@@ -374,9 +374,9 @@ def manager_attendance_csv(request):
     response["Content-Disposition"] = f'attachment; filename="attendance-{selected_date}.csv"'
     import csv
     writer = csv.writer(response)
-    writer.writerow(["Employee", "Division", "Shift date", "Shift start", "Shift end", "First qualifying clock-in", "Qualifying clock-out", "Calculated status", "Minutes late", "Missing clock-out", "Proxy", "Audit reference"])
+    writer.writerow(["Employee", "Division", "Shift date", "Shift start", "Shift end", "Schedule source", "First qualifying clock-in", "Qualifying clock-out", "Calculated status", "Minutes late", "Missing clock-out", "Proxy", "Audit reference"])
     for r in context["punctual_rows"]:
-        writer.writerow([r["employee"].name, r["division"].name if r["division"] else "", selected_date.isoformat(), r["shift_start"].isoformat(), r["shift_end"].isoformat(), r["in_time"].isoformat() if r["in_time"] else "", r["out_time"].isoformat() if r["out_time"] else "", r["status"], r["minutes_late"] if r["minutes_late"] is not None else "", "yes" if r["missing_clockout"] else "no", "yes" if r["proxy"] else "no", f"session:{r['session'].id}" if r["session"] else ""])
+        writer.writerow([r["employee"].name, r["division"].name if r["division"] else "", selected_date.isoformat(), r["shift_start"].isoformat(), r["shift_end"].isoformat(), r["shift"].source, r["in_time"].isoformat() if r["in_time"] else "", r["out_time"].isoformat() if r["out_time"] else "", r["status"], r["minutes_late"] if r["minutes_late"] is not None else "", "yes" if r["missing_clockout"] else "no", "yes" if r["proxy"] else "no", f"session:{r['session'].id}" if r["session"] else ""])
     return response
 
 
@@ -670,3 +670,63 @@ def manager_correction_action(request, pk, action):
         obj.status="APPROVED" if action=="approve" else "REJECTED"; obj.reviewed_by=request.user; obj.reviewed_at=timezone.now(); obj.manager_note=request.POST.get("manager_note","")[:1000]
         obj.save(update_fields=["status","reviewed_by","reviewed_at","manager_note"]); messages.success(request, "Pengajuan koreksi disetujui." if action=="approve" else "Pengajuan koreksi ditolak.")
     return redirect("manager_requests")
+
+from .models import FixedScheduleRule, ScheduleException, NotificationDelivery
+from .services import generate_fixed_shifts, process_alerts, telegram_config
+
+@login_required
+@user_passes_test(is_manager)
+@require_http_methods(["GET", "POST"])
+def manager_schedules(request):
+    result = None
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "mode":
+            div = get_object_or_404(Division, id=request.POST.get("division"))
+            mode = request.POST.get("schedule_mode")
+            if mode in ("ROSTER", "FIXED"):
+                div.schedule_mode = mode; div.save(update_fields=["schedule_mode"]); messages.success(request, "Mode jadwal disimpan.")
+        elif action == "rule":
+            div = get_object_or_404(Division, id=request.POST.get("division"))
+            weekday = int(request.POST.get("weekday"))
+            rule, _ = FixedScheduleRule.objects.get_or_create(division=div, weekday=weekday)
+            rule.is_workday = request.POST.get("is_workday") == "on"
+            rule.start_time = request.POST.get("start_time") or None; rule.end_time = request.POST.get("end_time") or None
+            rule.full_clean(); rule.save(); messages.success(request, "Aturan mingguan disimpan.")
+        elif action == "exception_delete":
+            ScheduleException.objects.filter(id=request.POST.get("exception_id"), date__gte=timezone.localdate()).delete(); messages.success(request, "Exception dihapus.")
+        elif action == "exception":
+            div = get_object_or_404(Division, id=request.POST.get("division"))
+            d = date.fromisoformat(request.POST.get("date"))
+            exc, _ = ScheduleException.objects.get_or_create(division=div, date=d)
+            exc.is_workday = request.POST.get("is_workday") == "on"; exc.start_time = request.POST.get("start_time") or None; exc.end_time = request.POST.get("end_time") or None; exc.note = request.POST.get("note", "")[:160]
+            exc.full_clean(); exc.save(); messages.success(request, "Exception disimpan.")
+        elif action in ("generate_preview", "generate_confirm"):
+            from_date = date.fromisoformat(request.POST.get("from_date") or timezone.localdate().isoformat())
+            result = generate_fixed_shifts(from_date=from_date, days=int(request.POST.get("days") or 45), division_id=request.POST.get("division") or None, confirm=action == "generate_confirm")
+            messages.success(request, "Hasil generate tersedia di halaman.")
+    divisions = Division.objects.filter(is_active=True).order_by("name")
+    rules = FixedScheduleRule.objects.select_related("division").order_by("division__name", "weekday")
+    exceptions = ScheduleException.objects.filter(date__gte=timezone.localdate()).select_related("division").order_by("date")[:100]
+    return render(request, "attendance/manager_schedules.html", {"active_nav":"schedules", "divisions":divisions, "rules":rules, "exceptions":exceptions, "weekdays":FixedScheduleRule.WEEKDAYS, "result":result})
+
+@login_required
+@user_passes_test(is_manager)
+@require_http_methods(["GET", "POST"])
+def manager_alerts(request):
+    preview = None
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "retry":
+            rec = get_object_or_404(NotificationDelivery, id=request.POST.get("delivery_id"), status="FAILED")
+            preview = process_alerts(send=True, event_type=rec.event_type, target_date=rec.target_date, retry_failed=True)
+        elif action == "preview":
+            d = date.fromisoformat(request.POST.get("date")) if request.POST.get("date") else None
+            preview = process_alerts(send=False, event_type=request.POST.get("event_type") or None, division_id=request.POST.get("division") or None, target_date=d)
+    qs = NotificationDelivery.objects.select_related("employee", "division").order_by("-created_at")
+    if request.GET.get("status"): qs = qs.filter(status=request.GET["status"])
+    if request.GET.get("event_type"): qs = qs.filter(event_type=request.GET["event_type"])
+    if request.GET.get("date"): qs = qs.filter(target_date=request.GET["date"])
+    if request.GET.get("division"): qs = qs.filter(division_id=request.GET["division"])
+    cfg = telegram_config()
+    return render(request, "attendance/manager_alerts.html", {"active_nav":"alerts", "deliveries":qs[:200], "divisions":Division.objects.filter(is_active=True), "event_types":NotificationDelivery.EVENT_TYPES, "config_enabled":cfg['enabled'], "config_complete":bool(cfg['token'] and cfg['chat_ids']), "preview":preview})

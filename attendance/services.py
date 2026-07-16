@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from django.conf import settings
+from urllib import request as urlrequest, parse as urlparse
 from django.utils import timezone
 
 
@@ -89,3 +90,144 @@ def approved_shift_queryset_for_day(model, selected_date, division_id=None):
     if division_id:
         qs = qs.filter(division_id=division_id)
     return qs
+
+
+def approved_leave_employee_ids(target_date):
+    from .models import LeaveRequest
+    return set(LeaveRequest.objects.filter(status="APPROVED", date_from__lte=target_date, date_to__gte=target_date).values_list("employee_id", flat=True))
+
+
+def resolve_fixed_schedule(division, target_date):
+    from .models import ScheduleException, FixedScheduleRule
+    exc = ScheduleException.objects.filter(division=division, date=target_date).first()
+    if exc and not exc.is_workday:
+        return None, None
+    rule = FixedScheduleRule.objects.filter(division=division, weekday=target_date.weekday()).first()
+    if exc and exc.is_workday and exc.start_time and exc.end_time:
+        return {"start_time": exc.start_time, "end_time": exc.end_time}, rule
+    if not rule or not rule.is_workday:
+        return None, None
+    return rule, rule
+
+
+def generate_fixed_shifts(from_date=None, days=45, division_id=None, confirm=False, stdout=None):
+    from .models import Division, EmployeeProfile, ShiftAssignment
+    from django.db import transaction
+    from django.utils import timezone
+    from datetime import timedelta
+    today = timezone.localdate()
+    from_date = from_date or today
+    qs = Division.objects.filter(is_active=True, schedule_mode="FIXED")
+    if division_id:
+        qs = qs.filter(id=division_id)
+    counts = {"created": 0, "updated": 0, "skipped": 0, "unchanged": 0}
+    for div in qs:
+        employees = [p.employee for p in EmployeeProfile.objects.filter(division=div, is_rostered=True, employee__is_active=True).select_related("employee")]
+        for offset in range(days):
+            d = from_date + timedelta(days=offset)
+            resolved, rule = resolve_fixed_schedule(div, d)
+            if not resolved:
+                counts["skipped"] += len(employees); continue
+            start_time = resolved["start_time"] if isinstance(resolved, dict) else resolved.start_time
+            end_time = resolved["end_time"] if isinstance(resolved, dict) else resolved.end_time
+            for emp in employees:
+                if ShiftAssignment.objects.filter(employee=emp, date=d, source="MANUAL").exists():
+                    counts["skipped"] += 1; continue
+                fixed = ShiftAssignment.objects.filter(employee=emp, date=d, source="FIXED").first()
+                if fixed:
+                    if fixed.start_time == start_time and fixed.end_time == end_time and fixed.division_id == div.id:
+                        counts["unchanged"] += 1; continue
+                    if d < today:
+                        counts["skipped"] += 1; continue
+                    counts["updated"] += 1
+                    if confirm:
+                        fixed.division = div; fixed.start_time = start_time; fixed.end_time = end_time; fixed.status = "APPROVED"; fixed.fixed_schedule_rule = rule; fixed.save(update_fields=["division","start_time","end_time","status","fixed_schedule_rule","updated_at"])
+                    continue
+                counts["created"] += 1
+                if confirm:
+                    with transaction.atomic():
+                        if not ShiftAssignment.objects.filter(employee=emp, date=d, source="MANUAL").exists():
+                            ShiftAssignment.objects.create(employee=emp, division=div, date=d, start_time=start_time, end_time=end_time, status="APPROVED", source="FIXED", fixed_schedule_rule=rule)
+    return counts
+
+
+def telegram_config():
+    return {
+        "enabled": attendance_setting("TELEGRAM_ALERTS_ENABLED", False),
+        "token": attendance_setting("TELEGRAM_BOT_TOKEN", ""),
+        "chat_ids": [c.strip() for c in attendance_setting("TELEGRAM_CHAT_IDS", "").split(",") if c.strip()],
+        "timeout": attendance_setting("ATTENDANCE_ALERT_HTTP_TIMEOUT_SECONDS", 10),
+    }
+
+
+def sanitize_error(text):
+    import re
+    return re.sub(r"bot[0-9]+:[A-Za-z0-9_-]+", "bot<redacted>", str(text))[:500]
+
+
+def send_telegram_message(text):
+    cfg = telegram_config()
+    if not cfg["enabled"] or not cfg["token"] or not cfg["chat_ids"]:
+        return False, "Telegram disabled or incomplete"
+    errors=[]
+    for chat in cfg["chat_ids"]:
+        try:
+            data = urlparse.urlencode({"chat_id": chat, "text": text[:3500]}).encode()
+            req = urlrequest.Request(f"https://api.telegram.org/bot{cfg['token']}/sendMessage", data=data, method="POST")
+            with urlrequest.urlopen(req, timeout=cfg["timeout"]) as resp:
+                if getattr(resp, "status", 200) >= 400:
+                    errors.append(str(resp.status))
+        except Exception as exc: errors.append(str(exc))
+    return (not errors), sanitize_error("; ".join(errors))
+
+
+def alert_candidates(target_date=None, event_type=None, division_id=None):
+    from .models import LeaveRequest, AttendanceCorrectionRequest, AttendanceEvent, PinAttempt, ShiftAssignment
+    from django.utils import timezone
+    from datetime import datetime, timedelta
+    target_date = target_date or timezone.localdate()
+    start = timezone.make_aware(datetime.combine(target_date, datetime.min.time())); end = start + timedelta(days=1)
+    candidates=[]
+    def add(t,key,msg,emp=None,div=None):
+        if event_type and t != event_type: return
+        if division_id and (not div or div.id != int(division_id)): return
+        candidates.append({"event_type":t,"dedupe_key":key,"message":msg,"employee":emp,"division":div,"target_date":target_date})
+    for lr in LeaveRequest.objects.filter(status="SUBMITTED", created_at__date__gte=target_date-timedelta(days=attendance_setting("ATTENDANCE_ALERT_REQUEST_LOOKBACK_DAYS",7))).select_related("employee","employee__profile__division"):
+        add("NEW_LEAVE_REQUEST", f"leave:{lr.id}", f"New leave request: {lr.employee.name} {lr.date_from} to {lr.date_to}", lr.employee, getattr(lr.employee.profile,'division',None) if hasattr(lr.employee,'profile') else None)
+    for cr in AttendanceCorrectionRequest.objects.filter(status="SUBMITTED", created_at__date__gte=target_date-timedelta(days=attendance_setting("ATTENDANCE_ALERT_REQUEST_LOOKBACK_DAYS",7))).select_related("employee","employee__profile__division"):
+        add("NEW_CORRECTION_REQUEST", f"correction:{cr.id}", f"New correction request: {cr.employee.name} {cr.request_type}", cr.employee, getattr(cr.employee.profile,'division',None) if hasattr(cr.employee,'profile') else None)
+    leaves = approved_leave_employee_ids(target_date)
+    shifts=ShiftAssignment.objects.filter(date=target_date,status="APPROVED",employee__is_active=True).select_related("employee","division")
+    if division_id: shifts=shifts.filter(division_id=division_id)
+    from .models import AttendanceSession
+    sessions=list(AttendanceSession.objects.filter(clock_in_time__lt=end+timedelta(days=1), clock_in_time__gte=start-timedelta(days=1)))
+    for sh in shifts:
+        if sh.employee_id in leaves: continue
+        res=classify_shift(sh,[s for s in sessions if s.employee_id==sh.employee_id], timezone.now())
+        if res['status']=="NO_SHOW": add("NO_SHOW", f"noshow:{sh.employee_id}:{sh.id}:{target_date}", f"No-show: {sh.employee.name} on {target_date}", sh.employee, sh.division)
+        if res.get('missing_clockout'): add("MISSING_CLOCKOUT", f"missing_clockout:{res['session'].id}:{sh.id}:{target_date}", f"Missing clock-out: {sh.employee.name} on {target_date}", sh.employee, sh.division)
+    for ev in AttendanceEvent.objects.filter(created_at__gte=start,created_at__lt=end,is_proxy=True).select_related("subject_employee","subject_employee__profile__division"):
+        div=getattr(getattr(ev.subject_employee,'profile',None),'division',None); add("PROXY_ATTENDANCE", f"proxy:{ev.id}", f"Proxy attendance recorded for {ev.subject_employee.name}", ev.subject_employee, div)
+    for pa in PinAttempt.objects.filter(locked_until__isnull=False, locked_until__gte=start).select_related("employee","employee__profile__division"):
+        div=getattr(getattr(pa.employee,'profile',None),'division',None); add("PIN_LOCKOUT", f"pin_lockout:{pa.employee_id}:{pa.purpose}:{pa.locked_until.isoformat()}", f"PIN lockout: {pa.employee.name} ({pa.purpose})", pa.employee, div)
+    summary_time=str(attendance_setting("ATTENDANCE_ALERT_DAILY_SUMMARY_TIME","18:00"))
+    if timezone.localtime().strftime("%H:%M") >= summary_time:
+        add("DAILY_SUMMARY", f"daily_summary:{target_date}", f"Daily summary {target_date}: expected {shifts.count()}, pending leave {LeaveRequest.objects.filter(status='SUBMITTED').count()}, pending corrections {AttendanceCorrectionRequest.objects.filter(status='SUBMITTED').count()}")
+    return candidates
+
+
+def process_alerts(send=False, event_type=None, division_id=None, target_date=None, retry_failed=False, max_retries=3):
+    from .models import NotificationDelivery
+    out=[]
+    for c in alert_candidates(target_date, event_type, division_id):
+        rec, _ = NotificationDelivery.objects.get_or_create(dedupe_key=c['dedupe_key'], defaults={k:c[k] for k in ['event_type','employee','division','target_date']})
+        if rec.status == 'SENT': continue
+        if rec.status == 'FAILED' and (not retry_failed or rec.attempts >= max_retries): continue
+        if not send: out.append((rec, c['message'], 'DRY_RUN')); continue
+        ok, err = send_telegram_message(c['message'])
+        rec.attempts += 1; rec.last_attempt_at = timezone.now()
+        if ok: rec.status='SENT'; rec.sent_at=timezone.now(); rec.last_error=''
+        else: rec.status='FAILED'; rec.last_error=err
+        rec.save(update_fields=['attempts','last_attempt_at','status','sent_at','last_error'])
+        out.append((rec,c['message'],rec.status))
+    return out
