@@ -1,10 +1,10 @@
 {% extends "attendance/base.html" %}
-{% block title %}Beranda Absensi Klinik{% endblock %}
+{% block title %}Beranda Absensi{% endblock %}
 {% block content %}
-<div class="text-center mb-4"><h1 class="display-6 fw-bold">Absensi Klinik</h1><p class="lead text-muted">Pilih portal yang ingin digunakan. Halaman ini ramah ponsel untuk staff dan manager.</p></div>
+<div class="text-center mb-4"><h1 class="display-6 fw-bold">Absensi</h1><p class="lead text-muted">Pilih portal yang ingin digunakan. Halaman ini ramah ponsel untuk staff dan manager.</p></div>
 <div class="row g-3">
   <div class="col-12 col-md-4"><div class="card app-card h-100"><div class="card-body d-flex flex-column"><h2 class="h4">Mulai Absensi</h2><p class="text-muted">Scan QR, ambil selfie, masukkan PIN, lalu clock in atau clock out.</p><a class="btn btn-success btn-lg mt-auto w-100" href="{% url 'attendance_page' %}">Mulai Absensi</a></div></div></div>
-  <div class="col-12 col-md-4"><div class="card app-card h-100"><div class="card-body d-flex flex-column"><h2 class="h4">Portal Staff</h2><p class="text-muted">Lihat roster, riwayat absensi, ajukan cuti, dan koreksi absensi.</p><a class="btn btn-primary btn-lg mt-auto w-100" href="{% url nav_employee_url_name %}">{% if nav_employee %}Portal Staff{% else %}Login Staff{% endif %}</a></div></div></div>
-  <div class="col-12 col-md-4"><div class="card app-card h-100"><div class="card-body d-flex flex-column"><h2 class="h4">Portal Manager</h2><p class="text-muted">Pantau absensi, review pengajuan, dan akses roster sesuai otorisasi.</p><a class="btn btn-dark btn-lg mt-auto w-100" href="{% url 'manager_dashboard' %}">Portal Manager</a></div></div></div>
+  <div class="col-12 col-md-4"><div class="card app-card h-100"><div class="card-body d-flex flex-column"><h2 class="h4">Portal Staff</h2><p class="text-muted">Lihat jadwal kerja, riwayat absensi, ajukan cuti, dan koreksi absensi.</p><a class="btn btn-primary btn-lg mt-auto w-100" href="{% url nav_employee_url_name %}">{% if nav_employee %}Portal Staff{% else %}Login Staff{% endif %}</a></div></div></div>
+  <div class="col-12 col-md-4"><div class="card app-card h-100"><div class="card-body d-flex flex-column"><h2 class="h4">Portal Manager</h2><p class="text-muted">Pantau absensi, review pengajuan, dan akses jadwal kerja sesuai otorisasi.</p><a class="btn btn-dark btn-lg mt-auto w-100" href="{% url 'manager_dashboard' %}">Portal Manager</a></div></div></div>
 </div>
 {% endblock %}
